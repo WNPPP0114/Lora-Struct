@@ -1,0 +1,56 @@
+# 模型相关参数
+model_name_or_path: "./Qwen3-1.7B"  # 预训练模型路径，使用本地模型
+torch_dtype: "float16"  # 模型数据类型，GPU 上使用 float16，CPU 上会自动切换为 float32
+
+# 数据相关参数
+dataset_name: null  # 数据集名称，null 表示使用本地数据
+dataset_config_name: null  # 数据集配置名称
+data_dir: "./data"  # 本地数据目录
+file_format: "json"  # 本地数据文件格式
+text_column: "text"  # 文本列名
+target_column: "target"  # 目标列名
+prompt_template: "{}"  # 提示模板
+max_length: 512  # 最大序列长度
+
+# LoRA 相关参数
+lora_r: 8  # LoRA 秩
+lora_alpha: 16  # LoRA alpha 参数
+lora_dropout: 0.1  # LoRA dropout 率
+target_modules: ["q_proj", "v_proj"]  # 目标模块
+lora_model_path: "./output/lora_model"  # LoRA 模型路径
+
+# 训练相关参数
+output_dir: "./output"  # 输出目录
+seed: 42  # 随机种子
+num_train_epochs: 10  # 训练轮数
+per_device_train_batch_size: 2  # 每设备训练批次大小
+per_device_eval_batch_size: 2  # 每设备评估批次大小
+gradient_accumulation_steps: 2  # 梯度累积步数
+learning_rate: 5e-4  # 学习率
+weight_decay: 0.0  # 权重衰减
+warmup_steps: 0  # 预热步数
+logging_steps: 10  # 日志记录步数
+evaluation_strategy: "steps"  # 评估策略
+save_strategy: "steps"  # 保存策略
+save_steps: 50  # 保存步数
+eval_steps: 50  # 评估步数
+load_best_model_at_end: true  # 加载最佳模型
+metric_for_best_model: "loss"  # 最佳模型指标
+fp16: true  # 使用 FP16
+fp16_opt_level: "O1"  # FP16 优化级别
+bf16: false  # 使用 BF16
+tf32: false  # 使用 TF32
+max_grad_norm: 1.0  # 最大梯度范数
+push_to_hub: false  # 推送至 Hub
+hub_model_id: null  # Hub 模型 ID
+hub_token: null  # Hub 令牌
+report_to: "none"  # 报告方式，设置为 none 避免需要 tensorboard
+run_name: "daily-advice-finetuning"  # 运行名称
+
+# 推理相关参数
+max_new_tokens: 200  # 最大新生成 tokens 数
+temperature: 0.7  # 温度参数
+top_p: 0.95  # 核采样概率
+top_k: 50  # _top-k 采样
+repetition_penalty: 1.0  # 重复惩罚
+do_sample: true  # 是否使用采样
