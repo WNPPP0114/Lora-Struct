@@ -1,16 +1,27 @@
 # 模型相关参数
 model_name_or_path: "./Qwen3-1.7B"  # 预训练模型路径，使用本地模型
+model_type: "llm"  # 模型类型: "llm" 或 "vlm"
 torch_dtype: "float16"  # 模型数据类型，GPU 上使用 float16，CPU 上会自动切换为 float32
 
 # 数据相关参数
 dataset_name: null  # 数据集名称，null 表示使用本地数据
 dataset_config_name: null  # 数据集配置名称
 data_dir: "./data"  # 本地数据目录
+
+# LLM 数据文件 (相对于 data_dir)
+train_file: "llm/train.json"
+validation_file: "llm/validation.json"
+
+# VLM 数据文件 (相对于 data_dir 或绝对路径)
+image_dir: "./data/vlm/images"  # 图片目录 (仅 VLM)
+prompt_file: "./data/vlm/prompt.json"  # 提示词文件 (仅 VLM)
+label_map_file: "./data/vlm/label_map.json"  # 标签映射文件 (仅 VLM)
+
 file_format: "json"  # 本地数据文件格式
 text_column: "text"  # 文本列名
 target_column: "target"  # 目标列名
 prompt_template: "{}"  # 提示模板
-max_length: 512  # 最大序列长度
+max_length: 2048  # 最大序列长度 (VLM 建议调大以容纳图片 token)
 
 # LoRA 相关参数
 lora_r: 8  # LoRA 秩
@@ -48,7 +59,7 @@ report_to: "none"  # 报告方式，设置为 none 避免需要 tensorboard
 run_name: "daily-advice-finetuning"  # 运行名称
 
 # 推理相关参数
-max_new_tokens: 200  # 最大新生成 tokens 数
+max_new_tokens: 500 # 最大新生成 tokens 数
 temperature: 0.7  # 温度参数
 top_p: 0.95  # 核采样概率
 top_k: 50  # _top-k 采样

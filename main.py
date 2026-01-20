@@ -1,5 +1,6 @@
 import argparse
 import yaml
+import os
 from train import train
 from evaluate import evaluate
 from inference import inference
@@ -33,6 +34,11 @@ class Config:
         self.dataset_name = None
         self.dataset_config_name = None
         self.data_dir = "./data"
+        self.train_file = "llm/train.json"
+        self.validation_file = "llm/validation.json"
+        self.image_dir = "./data/vlm/images"
+        self.prompt_file = "./data/vlm/prompt.json"
+        self.label_map_file = "./data/vlm/label_map.json"
         self.file_format = "json"
         self.text_column = "text"
         self.target_column = "target"
@@ -145,6 +151,25 @@ def main():
     
     # 从命令行参数更新配置
     config.update_from_args(args)
+    
+    # 自动调整输出目录结构
+    if config.model_name_or_path:
+        # 提取模型名称
+        model_name = os.path.basename(os.path.normpath(config.model_name_or_path))
+        # 处理类似 "path/to/model/" 的情况
+        if not model_name:
+             model_name = os.path.basename(os.path.dirname(os.path.normpath(config.model_name_or_path)))
+        
+        # 如果 output_dir 是默认值 "./output"，则追加模型名称
+        if config.output_dir == "./output":
+            config.output_dir = os.path.join(config.output_dir, model_name)
+            
+        # 如果 lora_model_path 是默认值 "./output/lora_model"，则更新为新的 output_dir 下
+        if config.lora_model_path == "./output/lora_model":
+            config.lora_model_path = os.path.join(config.output_dir, "lora_model")
+            
+    print(f"最终输出目录: {config.output_dir}")
+    print(f"最终 LoRA 模型路径: {config.lora_model_path}")
     
     # 执行任务
     if args.task == "train":

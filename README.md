@@ -19,8 +19,13 @@
 ├── Qwen3-VL-2B-Instruct/ # 本地视觉语言模型目录
 ├── Qwen3-VL-4B-Instruct/ # 本地视觉语言模型目录
 ├── data/                # 训练和验证数据
-│   ├── train.json       # 训练数据
-│   └── validation.json  # 验证数据
+│   ├── llm/             # LLM（大语言模型）数据
+│   │   ├── train.json       # LLM 训练数据
+│   │   └── validation.json  # LLM 验证数据
+│   └── vlm/             # VLM（视觉语言模型）数据
+│       ├── images/          # VLM 图片目录
+│       ├── prompt.json      # VLM 系统提示词
+│       └── label_map.json   # VLM 标签映射
 ├── output/              # 输出目录（包含训练检查点和LoRA模型）
 ├── config.yaml          # 配置文件
 ├── main.py              # 主执行脚本
@@ -37,7 +42,7 @@
 - **参数高效**：LoRA 只训练和存储少量参数（通常是原始模型的 1-3%）
 - **内存友好**：支持 FP16 训练，大幅降低内存使用
 - **即插即用**：训练生成的 LoRA 模块可灵活拼装到原始模型
-- **多模型支持**：兼容 Qwen3、GPT2、DistilGPT2 等多种模型
+- **多模型支持**：兼容 Qwen3、GPT2、DistilGPT2 等多种 LLM，以及 Qwen3-VL 等 VLM（视觉语言模型）
 - **完整流程**：从数据准备到模型训练、评估和推理的全流程支持
 - **易于扩展**：模块化设计，便于添加新功能和支持新模型
 
@@ -74,8 +79,16 @@ pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121
 
 #### 2.2 安装其他依赖
 
+您可以直接使用 requirements.txt 安装所有依赖：
+
 ```powershell
-pip install transformers datasets peft pyyaml
+pip install -r requirements.txt
+```
+
+或者手动安装核心依赖：
+
+```powershell
+pip install transformers datasets peft pyyaml accelerate safetensors
 ```
 
 #### 2.3 验证安装
@@ -106,23 +119,129 @@ python -c "import torch; print('PyTorch 版本:', torch.__version__); print('CUD
 
 ### 4. 数据准备
 
-#### 4.1 使用示例数据（快速测试）
+根据您要微调的模型类型，准备相应的数据：
+
+> **关于数据集划分的说明**
+> 本框架对 LLM 和 VLM 采用了不同的数据集划分策略，以适应各自最常见的使用场景：
+> - **LLM (手动划分)**: 为了让用户对训练和验证数据有更精确的控制（尤其是在指令微调中），LLM 数据需要您手动拆分为 `train.json` 和 `validation.json`。
+> - **VLM (自动划分)**: 为了方便管理大量的图片文件，VLM 数据只需将所有图片放入一个文件夹。系统会自动进行科学的**分层随机划分**，确保验证集的有效性和类别均衡。**请注意**，此策略要求您提供足够的数据量（建议每个类别至少有 10-20 张图片），以保证划分后的验证集具有统计意义。
+
+#### 4.1 LLM（大语言模型）数据准备
+
+##### 4.1.1 使用示例数据（快速测试）
 
 项目已包含日常生活建议的示例数据：
-- `data/train.json` - 15 个训练样本
-- `data/validation.json` - 5 个验证样本
+- `data/llm/train.json` - 15 个训练样本
+- `data/llm/validation.json` - 5 个验证样本
 
-#### 4.2 准备自定义数据
+##### 4.1.2 准备自定义 LLM 数据
 
-如果您想使用自己的数据：
-1. 在 `data/` 目录下创建 `train.json` 和 `validation.json` 文件
+如果您想使用自己的 LLM 数据：
+1. 在 `data/llm/` 目录下创建 `train.json` 和 `validation.json` 文件
 2. 数据格式为 JSON 数组，每个元素包含 `text` 和 `target` 字段：
+
+> **数据集划分**: LLM 数据需要您**手动划分**为 `train.json` 和 `validation.json` 两个文件。系统会直接加载它们，不会进行自动划分。
 
 ```json
 [
     {"text": "如何保持良好的睡眠质量？", "target": "保持良好的睡眠质量可以尝试以下方法：1. 建立规律的作息时间..."}
 ]
 ```
+
+#### 4.2 VLM（视觉语言模型）数据准备
+
+##### 4.2.1 目录结构
+
+VLM 数据需要以下文件和目录：
+
+```
+data/vlm/
+├── images/          # 图片目录，存放所有训练和验证图片
+├── prompt.json      # 系统提示词，指导模型的行为和输出格式
+└── label_map.json   # 标签映射，定义图片文件名与输出结果的对应关系
+```
+
+##### 4.2.2 准备图片数据
+
+1. 将您的图片放入 `data/vlm/images/` 目录
+2. 图片文件名格式建议为：`{tags}_{其他信息}.jpg`
+   - 例如：`000_20260103.jpg`（000 为标签编码）
+   - 编码规则由 `label_map.json` 定义，每一位代表一个属性。
+
+##### 4.2.3 配置系统提示词
+
+编辑 `data/vlm/prompt.json` 文件，定义系统提示词。您可以直接使用纯文本格式，无需 JSON 结构：
+
+```text
+你是一个工业安全视觉检测AI。你的任务是分析除尘室监控图像，判断是否存在“管道粉尘泄漏”。
+
+注意：图片可能包含“日间彩色模式”或“夜间红外黑白模式”。
+
+请严格按照以下步骤进行推理分析，并输出JSON结果：
+...
+```
+
+##### 4.2.4 配置标签映射
+
+编辑 `data/vlm/label_map.json` 文件，定义标签编码规则。支持**位置编码**模式，每一位对应一个字段：
+
+```json
+{
+    "mapping_type": "positional",
+    "positions": [
+        {
+            "field": "status",
+            "map": { "0": "No Leakage", "1": "Leakage" }
+        },
+        {
+            "field": "sub_type",
+            "map": { 
+                "0": "Normal", 
+                "1": "Ambient Dust", 
+                "2": "Light Beams",
+                "3": "High Pressure", 
+                "4": "Low Pressure" 
+            }
+        },
+        {
+            "field": "is_night_mode",
+            "map": { "0": false, "1": true }
+        }
+    ],
+    "defaults": {
+        "confidence": 1.0,
+        "reasoning": "Auto-generated."
+    }
+}
+```
+
+> **关于置信度 (confidence)**:
+> `defaults` 中的 `confidence: 1.0` 仅用于生成训练数据的目标标签（Ground Truth）。这意味着我们教模型：“对于这类样本，你应该非常确信”。
+> 在实际推理时，模型输出的 `confidence` 值是它根据图像特征和学到的模式自动生成的，不一定会一直是 1.0。
+
+例如，文件名 `130_xxx.jpg` 将被解析为：
+- 第1位 `1` -> `status: Leakage` (有泄漏)
+- 第2位 `3` -> `sub_type: High Pressure` (高压泄漏)
+- 第3位 `0` -> `is_night_mode: false` (日间模式)
+
+> **数据集划分**: VLM 数据集会自动进行**分层随机划分**，确保训练集和验证集中各类别的样本比例均衡，从而提高模型评估的可靠性。
+
+##### 4.2.5 (可选) VLM 数据增强
+当图片数据量不足时，**数据增强**是提升模型性能和泛化能力的关键手段。它通过对现有图片进行旋转、翻转、调整亮度/对比度等操作，来模拟真实世界中的各种变化。
+
+目前项目**尚未内置**自动数据增强功能，但您可以通过以下方式手动实现：
+- **离线增强 (推荐)**: 使用脚本或工具 (如 `Pillow`, `OpenCV`) 提前生成增强后的图片副本，并将它们与原始图片一起放入 `images` 文件夹。这是最简单且无需修改代码的方式。
+- **在线增强 (高级)**: 修改 `data_processing.py` 文件，在加载图片时使用 `torchvision.transforms` 或 `albumentations` 等库动态进行数据增强。
+
+##### 4.2.6 (可选) 处理类别不均衡
+在许多现实场景中（如缺陷检测），“正常”样本的数量远多于“异常”样本。这种**类别不均衡**问题会导致模型倾向于预测多数类，而忽略少数类。
+
+**解决方案：手动过采样 (Manual Over-sampling)**
+这是最简单且有效的平衡数据方法，无需修改代码：
+1. **识别少数类**: 找到 `images` 文件夹中数量最少的类别（如“高压泄漏”）。
+2. **复制文件**: 将这些少数类的图片文件复制多份，并确保新文件名**保持标签前缀不变**（如 `130_`），但文件名本身唯一（如 `130_original_copy1.jpg`）。
+
+通过这种方式，您可以手动平衡训练数据中各类别的比例，从而提升模型对少数类的识别能力。
 
 ### 5. 配置参数
 
@@ -133,6 +252,7 @@ python -c "import torch; print('PyTorch 版本:', torch.__version__); print('CUD
 ```yaml
 # 模型相关参数
 model_name_or_path: "./Qwen3-1.7B"  # 模型路径
+model_type: "llm"  # 模型类型，llm（大语言模型）或 vlm（视觉语言模型）
 torch_dtype: "float16"  # 数据类型，GPU 上使用 float16，CPU 上使用 float32
 
 # 训练相关参数
@@ -145,7 +265,14 @@ learning_rate: 5e-4  # 学习率，增大会加速收敛但可能导致不稳定
 lora_r: 8  # LoRA 秩，控制 LoRA 矩阵的秩，增大可提高模型表达能力但会增加内存使用，常用值 4-32
 lora_alpha: 16  # LoRA alpha 参数，控制 LoRA 的缩放因子，通常设为 lora_r 的 2 倍。alpha 值越大，LoRA 模块对模型输出的影响越大；值越小，影响越小，更接近原始模型
 lora_dropout: 0.1  # LoRA dropout 率，增大可减少过拟合但可能降低模型性能，常用值 0.0-0.2
-target_modules: ["q_proj", "v_proj"]  # 目标模块，选择要应用 LoRA 的注意力机制模块，通常包括 q_proj 和 v_proj
+target_modules: ["q_proj", "v_proj"]
+# 目标模块说明：
+# - q_proj, k_proj, v_proj: 注意力机制中的 Query, Key, Value 投影层
+# - o_proj: 注意力机制的输出投影层
+# - gate_proj, up_proj, down_proj: 前馈神经网络 (MLP) 中的投影层
+# 推荐配置：
+# 1. 显存优先: ["q_proj", "v_proj"]
+# 2. 效果优先: ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 ```
 
 #### 5.2 根据硬件调整
@@ -172,14 +299,16 @@ python main.py --task evaluate --lora_model_path ./output/lora_model
 
 #### 不同场景的指令选择
 
+以下指令均假设您已正确配置 `config.yaml`，脚本会自动推断 LoRA 模型路径。
+
 | 场景 | 适用情况 | 命令 |
 |------|---------|------|
-| **基本问答** | 日常简单问题，不需要详细回答 | `python main.py --task inference --lora_model_path ./output/lora_model` |
-| **详细回答** | 需要详细解释的问题，如教程、步骤说明等 | `python main.py --task inference --lora_model_path ./output/lora_model --max_new_tokens 2000` |
-| **创意回答** | 需要创意性的问题，如故事创作、创意建议等 | `python main.py --task inference --lora_model_path ./output/lora_model --max_new_tokens 1000 --temperature 1.0 --top_p 0.95` |
-| **准确回答** | 需要准确信息的问题，如事实性问题、技术细节等 | `python main.py --task inference --lora_model_path ./output/lora_model --max_new_tokens 1000 --temperature 0.1 --top_p 0.8` |
-| **平衡设置** | 大多数日常问题，兼顾准确性和自然表达 | `python main.py --task inference --lora_model_path ./output/lora_model --max_new_tokens 1000 --temperature 0.7 --top_p 0.95` |
-| **比较模型** | 比较原始模型和微调模型的表现差异 | 使用微调模型：`python main.py --task inference --lora_model_path ./output/lora_model`<br>使用原始模型：`python main.py --task inference --use_original_model` |
+| **基本问答** | 日常简单问题，不需要详细回答 | `python main.py --task inference` |
+| **详细回答** | 需要详细解释的问题，如教程、步骤说明等 | `python main.py --task inference --max_new_tokens 2000` |
+| **创意回答** | 需要创意性的问题，如故事创作、创意建议等 | `python main.py --task inference --max_new_tokens 1000 --temperature 1.0 --top_p 0.95` |
+| **准确回答** | 需要准确信息的问题，如事实性问题、技术细节等 | `python main.py --task inference --max_new_tokens 1000 --temperature 0.1 --top_p 0.8` |
+| **平衡设置** | 大多数日常问题，兼顾准确性和自然表达 | `python main.py --task inference --max_new_tokens 1000 --temperature 0.7 --top_p 0.95` |
+| **比较模型** | 比较原始模型和微调模型的表现差异 | 使用微调模型：`python main.py --task inference`<br>使用原始模型：`python main.py --task inference --use_original_model` |
 
 ## 🎯 LoRA 工作流程详解
 
@@ -191,7 +320,9 @@ python main.py --task evaluate --lora_model_path ./output/lora_model
 ### 阶段 2：LoRA 训练流程
 
 1. **配置 LoRA 参数**：设置 lora_r、lora_alpha、target_modules 等参数
-2. **加载原始模型**：使用 `AutoModelForCausalLM.from_pretrained` 加载原始模型
+2. **加载原始模型**：根据模型类型选择加载方式
+   - LLM：使用 `AutoModelForCausalLM.from_pretrained` 加载原始模型
+   - VLM：使用 `AutoModelForVision2Seq.from_pretrained` 加载原始模型
 3. **创建 LoRA 配置**：使用 `LoraConfig` 创建 LoRA 配置
 4. **应用 LoRA 到模型**：使用 `get_peft_model` 将 LoRA 配置应用到原始模型
 5. **执行训练**：使用 `Trainer` 执行模型训练
@@ -212,49 +343,104 @@ python main.py --task evaluate --lora_model_path ./output/lora_model
 
 ## 📊 命令行参数
 
+您可以通过命令行参数覆盖 `config.yaml` 中的配置，方便快速实验。
+
 | 参数 | 描述 | 默认值 |
 |------|------|--------|
 | `--config` | 配置文件路径 | `config.yaml` |
-| `--task` | 任务类型，可选值：`train`、`evaluate`、`inference` | - |
-| `--model_name_or_path` | 模型路径，覆盖配置文件中的设置 | - |
-| `--output_dir` | 输出目录，覆盖配置文件中的设置 | - |
-| `--num_train_epochs` | 训练轮数，覆盖配置文件中的设置 | - |
-| `--per_device_train_batch_size` | 批次大小，覆盖配置文件中的设置 | - |
-| `--learning_rate` | 学习率，覆盖配置文件中的设置 | - |
-| `--lora_r` | LoRA 秩，覆盖配置文件中的设置 | - |
-| `--lora_alpha` | LoRA alpha 参数，覆盖配置文件中的设置 | - |
-| `--lora_model_path` | LoRA 模型路径，用于推理，覆盖配置文件中的设置 | - |
-| `--use_original_model` | 使用原始模型进行推理，不加载 LoRA 权重 | - |
-| `--max_new_tokens` | 推理时生成的最大 token 数，覆盖配置文件中的设置 | - |
-| `--temperature` | 推理时的温度参数，控制生成文本的随机性，覆盖配置文件中的设置 | - |
-| `--top_p` | 推理时的 top-p 参数，控制生成文本的多样性，覆盖配置文件中的设置 | - |
-| `--repetition_penalty` | 推理时的重复惩罚参数，控制生成文本的重复程度，覆盖配置文件中的设置 | - |
+| `--task` | 任务类型，可选值：`train`、`evaluate`、`inference` | (必需参数) |
+| `--model_name_or_path` | 模型路径，覆盖配置文件中的设置 | (从 config 读取) |
+| `--model_type` | 模型类型，可选值：`llm`、`vlm`，覆盖配置文件中的设置 | (从 config 读取) |
+| `--output_dir` | 输出目录，覆盖配置文件中的设置 | (从 config 读取) |
+| `--num_train_epochs` | 训练轮数，覆盖配置文件中的设置 | (从 config 读取) |
+| `--per_device_train_batch_size` | 批次大小，覆盖配置文件中的设置 | (从 config 读取) |
+| `--learning_rate` | 学习率，覆盖配置文件中的设置 | (从 config 读取) |
+| `--lora_r` | LoRA 秩，覆盖配置文件中的设置 | (从 config 读取) |
+| `--lora_alpha` | LoRA alpha 参数，覆盖配置文件中的设置 | (从 config 读取) |
+| `--lora_model_path` | LoRA 模型路径，用于推理，覆盖配置文件中的设置 | (从 config 读取) |
+| `--use_original_model` | 使用原始模型进行推理，不加载 LoRA 权重 | `False` |
+| `--max_new_tokens` | 推理时生成的最大 token 数，覆盖配置文件中的设置 | (从 config 读取) |
+| `--temperature` | 推理时的温度参数，控制生成文本的随机性，覆盖配置文件中的设置 | (从 config 读取) |
+| `--top_p` | 推理时的 top-p 参数，控制生成文本的多样性，覆盖配置文件中的设置 | (从 config 读取) |
+| `--repetition_penalty` | 推理时的重复惩罚参数，控制生成文本的重复程度，覆盖配置文件中的设置 | (从 config 读取) |
+
+## 📁 输出目录说明
+
+系统会自动根据模型名称创建子目录，以区分不同模型的训练结果。
+
+例如，如果您微调的是 `Qwen3-1.7B`，输出目录结构如下：
+
+```
+output/
+└── Qwen3-1.7B/          # 自动生成的模型子目录
+    ├── checkpoint-X/    # 训练过程中的中间检查点
+    ├── lora_model/      # 最终保存的 LoRA 模型（用于推理）
+    ├── eval_results.json
+    └── trainer_state.json
+```
+
+- **checkpoint-X**: 包含完整的训练状态，可用于从中断处恢复训练。
+- **lora_model**: 仅包含 LoRA 权重和配置，体积小，用于最终推理。
 
 ## ⚠️ 注意事项
 
 1. **硬件要求**：
    - **CPU 训练**：小型模型（如 distilgpt2）可在 CPU 上运行，但训练速度较慢
    - **GPU 训练**（推荐）：
-     - 小型模型（如 distilgpt2）：需要至少 4GB GPU 内存
-     - 中型模型（如 Qwen3-1.7B）：需要至少 8GB GPU 内存
-     - 大型模型（如 Qwen3-4B）：需要至少 16GB GPU 内存
-     - 视觉语言模型（如 Qwen3-VL-4B-Instruct）：需要至少 24GB GPU 内存
+     - 小型 LLM 模型（如 distilgpt2）：需要至少 4GB GPU 内存
+     - 中型 LLM 模型（如 Qwen3-1.7B）：需要至少 8GB GPU 内存
+     - 大型 LLM 模型（如 Qwen3-4B）：需要至少 16GB GPU 内存
+     - 小型 VLM 模型（如 Qwen3-VL-2B-Instruct）：需要至少 16GB GPU 内存
+     - 大型 VLM 模型（如 Qwen3-VL-4B-Instruct）：需要至少 24GB GPU 内存
 
 2. **数据格式**：
-   - 数据文件应为 JSON 格式
-   - 每行包含 `text`（输入文本）和 `target`（目标输出）字段
+   - **LLM 数据格式**：
+     - 数据文件应为 JSON 格式
+     - 每行包含 `text`（输入文本）和 `target`（目标输出）字段
+   - **VLM 数据格式**：
+     - 图片格式：支持 JPG、PNG 等常见图片格式
+     - 提示词格式：JSON 格式，包含 `system_prompt` 字段
+     - 标签映射格式：JSON 格式，键为图片文件名前缀，值为输出结果
 
 3. **训练结果**：
    - 训练完成后，LoRA 权重将保存在 `output/lora_model` 目录
    - 评估结果将保存在 `output/eval_results.json` 文件
 
 4. **推理模式**：
-   - 推理时，模型会进入交互式模式，输入问题即可获得回答
-   - 输入 `exit` 退出推理模式
-   - 模型会在回答完成后自动停止生成，不会一直生成长度到最大限制
-   - 系统会自动清理输出文本中的重复内容，确保回答更加简洁
+   - 推理时，模型会进入交互式模式。
+   - **LLM 模式**：输入文本问题即可获得回答。
+   - **VLM 模式**：输入图片路径（如 `./data/vlm/images/000_xxx.jpg`），模型会自动加载 `prompt.json` 中的系统提示词进行分析。
+   - 输入 `exit` 退出推理模式。
 
-## 📚 示例：微调日常生活建议模型
+## 🔧 常见问题排查
+
+### 1. CUDA Out of Memory (OOM)
+如果遇到显存不足错误：
+- 减小 `per_device_train_batch_size`（例如从 4 减到 2 或 1）。
+- 增加 `gradient_accumulation_steps` 以保持总批次大小不变。
+- 确保 `torch_dtype` 设置为 `float16`。
+- 减小 `max_length`（对于 VLM，图片 token 占用较多，可能需要适当减小文本长度）。
+
+### 2. 训练损失不下降
+- 检查学习率 `learning_rate` 是否过大或过小（LoRA 通常使用 1e-4 到 5e-4）。
+- 检查数据质量，确保 `target` 字段非空且有意义。
+- 增加 `lora_r` 和 `lora_alpha` 尝试提高模型容量。
+
+### 3. VLM 推理报错 "Image not found"
+- 确保输入的图片路径是绝对路径或相对于当前工作目录的正确路径。
+- 检查图片文件是否存在且可读。
+
+### 4. Windows 下路径问题
+- 尽量使用正斜杠 `/` 或双反斜杠 `\\`。
+- 确保文件路径中没有特殊字符。
+
+## 📚 示例：LLM 和 VLM 微调
+
+本项目提供了两种开箱即用的微调示例：
+- **LLM 示例**：以**日常生活建议**为主题，微调一个问答模型。
+- **VLM 示例**：以**工业管道泄漏检测**为主题，微调一个视觉分析模型。
+
+### 示例 1：微调 LLM 日常生活建议模型
 
 本项目已包含一个日常生活建议的示例数据集，您可以直接运行以下命令开始微调：
 
@@ -269,14 +455,62 @@ python main.py --task inference --lora_model_path ./output/lora_model --max_new_
 python main.py --task inference --use_original_model --max_new_tokens 1000 --temperature 0.7 --top_p 0.95
 ```
 
-#### 输入示例：
+#### LLM 输入示例：
 ```
 输入文本: 如何保持良好的睡眠质量？
 ```
 
-#### 输出示例：
+#### LLM 输出示例：
 ```
 输出结果: 保持良好的睡眠质量可以尝试以下方法：1. 建立规律的作息时间，每天固定上床和起床时间；2. 睡前避免使用电子设备，因为蓝光会抑制褪黑素分泌；3. 创造舒适的睡眠环境，保持房间安静、黑暗和适宜的温度；4. 睡前避免摄入咖啡因和大量食物；5. 可以尝试睡前放松活动，如阅读、听轻音乐或冥想。
+```
+
+### 示例 2：微调 VLM 视觉检测模型
+
+以下是使用 Qwen3-VL-2B-Instruct 微调视觉检测模型的示例：
+
+#### 配置准备
+
+1. 编辑 `config.yaml`，设置 VLM 相关参数：
+
+```yaml
+# 模型相关参数
+model_name_or_path: "./Qwen3-VL-2B-Instruct"  # 本地视觉语言模型路径
+model_type: "vlm"  # 模型类型设置为 vlm
+
+# VLM 数据文件 (相对于 data_dir 或绝对路径)
+image_dir: "./data/vlm/images"  # 图片目录 (仅 VLM)
+prompt_file: "./data/vlm/prompt.json"  # 提示词文件 (仅 VLM)
+label_map_file: "./data/vlm/label_map.json"  # 标签映射文件 (仅 VLM)
+```
+
+2. 准备好图片数据、提示词和标签映射文件（参考 4.2 VLM 数据准备）
+
+#### 运行微调
+
+```powershell
+# 使用 Qwen3-VL-2B-Instruct 模型微调视觉检测模型
+python main.py --task train
+
+# 微调完成后进行推理
+python main.py --task inference --lora_model_path ./output/lora_model --max_new_tokens 500 --temperature 0.1 --top_p 0.8
+```
+
+#### VLM 输入示例：
+```
+# 在推理时，输入图片路径进行分析
+输入图片路径: ./data/vlm/images/0_20260103_121525_raw.jpg
+```
+
+#### VLM 输出示例：
+```
+输出结果: {
+    "status": "No Leakage",
+    "sub_type": "Normal",
+    "is_night_mode": false,
+    "confidence": 1.0,
+    "reasoning": "Normal operation."
+}
 ```
 
 ## 🤝 贡献

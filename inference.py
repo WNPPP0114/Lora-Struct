@@ -1,5 +1,8 @@
 import torch
-from transformers import AutoTokenizer
+import os
+import json
+from transformers import AutoTokenizer, AutoProcessor
+from PIL import Image
 from model_config import load_lora_model
 
 def inference(config):
@@ -8,161 +11,143 @@ def inference(config):
     Args:
         config: 配置对象，包含推理相关参数
     """
-    # 加载分词器
-    tokenizer = AutoTokenizer.from_pretrained(config.model_name_or_path)
+    # 自动检测是否是 VLM
+    try:
+        from transformers import AutoConfig
+        model_config = AutoConfig.from_pretrained(config.model_name_or_path)
+        architectures = getattr(model_config, "architectures", [])
+        is_vlm = any("Vision" in arch or "Qwen2VL" in arch or "Qwen3VL" in arch for arch in architectures)
+    except:
+        is_vlm = getattr(config, "model_type", "llm") == "vlm"
+        
+    if is_vlm:
+        print(f"加载 Processor: {config.model_name_or_path}")
+        processor = AutoProcessor.from_pretrained(config.model_name_or_path)
+        tokenizer = processor.tokenizer
+        
+        # 加载 System Prompt
+        system_prompt = ""
+        if config.prompt_file and os.path.exists(config.prompt_file):
+            try:
+                with open(config.prompt_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    # 尝试解析 JSON
+                    try:
+                        data = json.loads(content)
+                        if isinstance(data, dict) and "system_prompt" in data:
+                            system_prompt = data["system_prompt"]
+                        else:
+                            system_prompt = content
+                    except json.JSONDecodeError:
+                        system_prompt = content
+                print(f"已加载 System Prompt (长度: {len(system_prompt)})")
+            except Exception as e:
+                print(f"加载 Prompt 文件失败: {e}")
+    else:
+        # 加载分词器
+        # 如果自动检测失败，尝试加载 Processor，如果失败则回退到 Tokenizer
+        try:
+            if is_vlm: # 理论上这里不会进，但为了保险
+                 processor = AutoProcessor.from_pretrained(config.model_name_or_path)
+                 tokenizer = processor.tokenizer
+            else:
+                 tokenizer = AutoTokenizer.from_pretrained(config.model_name_or_path)
+                 processor = None
+        except:
+             # 最后的兜底
+             tokenizer = AutoTokenizer.from_pretrained(config.model_name_or_path)
+             processor = None
     
     # 加载模型
     if hasattr(config, 'use_original_model') and config.use_original_model:
         # 使用原始模型
         print(f"加载原始模型: {config.model_name_or_path}")
-        from transformers import AutoModelForCausalLM
-        model = AutoModelForCausalLM.from_pretrained(config.model_name_or_path)
+        if is_vlm:
+            from transformers import AutoModelForVision2Seq
+            model = AutoModelForVision2Seq.from_pretrained(config.model_name_or_path, torch_dtype="auto", device_map="auto")
+        else:
+            from transformers import AutoModelForCausalLM
+            model = AutoModelForCausalLM.from_pretrained(config.model_name_or_path, torch_dtype="auto", device_map="auto")
         print("原始模型加载完成")
     else:
         # 使用带有 LoRA 权重的模型
         model = load_lora_model(config.model_name_or_path, config.lora_model_path)
+    
     model.eval()
     
-    # 将模型移到 GPU 设备（如果可用）
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    print(f"模型已移到设备: {device}")
+    # 将模型移到 GPU 设备（如果可用且未自动分配）
+    if not hasattr(model, "device_map") or not model.device_map:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+        print(f"模型已移到设备: {device}")
+    else:
+        device = model.device
     
     # 推理循环
     print("开始推理，输入 'exit' 退出")
     while True:
         # 获取输入
-        input_text = input("输入文本: ")
-        if input_text.lower() == "exit":
-            break
-        
-        # === 修改开始 ===
-        # 1. 构建消息列表
-        messages = [
-            {"role": "user", "content": input_text}
-        ]
-        
-        # 2. 应用聊天模板 (apply_chat_template 会自动添加 <|im_start|> 等特殊标记)
-        try:
-            text = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True
-            )
-        except Exception:
-            # 如果模型没有模板（比较少见），回退到原始方式
-            text = input_text
+        if is_vlm:
+            image_path = input("输入图片路径: ")
+            if image_path.lower() == "exit":
+                break
             
-        print(f"实际输入模型的文本: {text}") # 调试用，看看格式对不对
-
-        # 3. 分词
-        inputs = tokenizer(text, return_tensors="pt")
-        # === 修改结束 ===
+            if not os.path.exists(image_path):
+                print("图片文件不存在，请重新输入")
+                continue
+                
+            # 构建 VLM 输入
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image_path},
+                        {"type": "text", "text": system_prompt},
+                    ],
+                }
+            ]
+            
+            # 准备输入
+            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            image_inputs = Image.open(image_path).convert("RGB")
+            inputs = processor(text=[text], images=[image_inputs], padding=True, return_tensors="pt")
+            inputs = {k: v.to(model.device) for k, v in inputs.items()}
+            
+        else:
+            input_text = input("输入文本: ")
+            if input_text.lower() == "exit":
+                break
+            
+            # 构建 LLM 输入
+            messages = [{"role": "user", "content": input_text}]
+            text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = tokenizer(text, return_tensors="pt")
+            inputs = {k: v.to(model.device) for k, v in inputs.items()}
         
         # 推理
         with torch.no_grad():
-            # 将输入移到与模型相同的设备
-            inputs = {k: v.to(device) for k, v in inputs.items()}
-            
-            # 获取模型特定的所有结束符
-            terminators = [
-                tokenizer.eos_token_id,
-                tokenizer.convert_tokens_to_ids("<|endoftext|>"),
-                tokenizer.convert_tokens_to_ids("<|im_end|>") # Qwen 特有
-            ]
-            # 过滤掉 None
-            terminators = [t for t in terminators if t is not None]
-
             outputs = model.generate(
                 **inputs,
                 max_new_tokens=config.max_new_tokens,
                 temperature=config.temperature,
                 top_p=config.top_p,
-                top_k=config.top_k,
                 repetition_penalty=config.repetition_penalty,
-                do_sample=config.do_sample,
-                eos_token_id=terminators,  # 传入列表
-                pad_token_id=tokenizer.pad_token_id
+                do_sample=config.do_sample
             )
         
         # 解码输出
-        output_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        
-        # 清理输出文本，去除可能的重复内容
-        # 1. 移除输入提示的重复
-        if input_text in output_text:
-            # 只保留输入提示后的内容
-            cleaned_output = output_text.split(input_text, 1)[1].strip()
+        if is_vlm:
+            # VLM 输出处理
+            generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.get("input_ids"), outputs)]
+            output_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
         else:
-            cleaned_output = output_text
-        
-        # 2. 移除重复的"答案："和"最终答案："部分
-        import re
-        # 检测并移除重复的答案模式
-        # 匹配"答案："、"最终答案："等模式
-        answer_patterns = r'(答案：|最终答案：|总结：).*?(?=(答案：|最终答案：|总结：|$))'
-        
-        # 提取所有答案部分
-        answer_matches = re.findall(answer_patterns, cleaned_output, re.DOTALL)
-        
-        # 如果有答案部分，只保留最后一个
-        if answer_matches:
-            # 找到最后一个答案部分的位置
-            last_answer_pos = cleaned_output.rfind('答案：')
-            if last_answer_pos == -1:
-                last_answer_pos = cleaned_output.rfind('最终答案：')
-            if last_answer_pos == -1:
-                last_answer_pos = cleaned_output.rfind('总结：')
-            
-            # 只保留答案部分之前的内容
-            if last_answer_pos != -1:
-                cleaned_output = cleaned_output[:last_answer_pos].strip()
-        
-        # 3. 检测并移除重复段落
-        # 分割文本为段落
-        paragraphs = [p.strip() for p in cleaned_output.split('\n\n') if p.strip()]
-        
-        # 去重段落
-        seen_paragraphs = set()
-        unique_paragraphs = []
-        
-        for para in paragraphs:
-            # 标准化段落（移除空白字符差异）
-            normalized_para = re.sub(r'\s+', ' ', para)
-            if normalized_para not in seen_paragraphs:
-                seen_paragraphs.add(normalized_para)
-                unique_paragraphs.append(para)
-        
-        # 重新组合段落
-        cleaned_output = '\n\n'.join(unique_paragraphs)
-        
-        # 4. 处理特殊标记和重复内容
-        import re
-        # 移除重复的 ``` 标记
-        cleaned_output = re.sub(r'`{3,}\s*`{3,}', '```', cleaned_output)
-        # 移除多余的 ``` 标记
-        cleaned_output = re.sub(r'`{3,}', '', cleaned_output)
-        
-        # 5. 移除末尾的空白和不完整句子
-        cleaned_output = cleaned_output.strip()
-        if cleaned_output:
-            # 移除末尾可能的不完整句子
-            sentences = re.split(r'[。！？]', cleaned_output)
-            if sentences:
-                # 只保留完整的句子
-                complete_sentences = [s for s in sentences if s.strip()]
-                if complete_sentences:
-                    cleaned_output = '。'.join(complete_sentences) + '。'
-        
-        # 6. 最终清理
-        # 移除多余的空行
-        cleaned_output = re.sub(r'\n{3,}', '\n\n', cleaned_output)
-        # 移除首尾空白
-        cleaned_output = cleaned_output.strip()
+            # LLM 输出处理
+            generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.get("input_ids"), outputs)]
+            output_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
         
         # 打印输出
         print("输出结果:")
-        print(cleaned_output)
+        print(output_text.strip())
         print("-" * 50)
 
 if __name__ == "__main__":

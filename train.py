@@ -32,7 +32,16 @@ def train(config):
         
         # 加载和处理数据
         print("加载和处理数据...")
-        dataset, tokenizer = load_and_process_data(config)
+        dataset, tokenizer_or_processor = load_and_process_data(config)
+        
+        # 处理 tokenizer/processor
+        if hasattr(tokenizer_or_processor, "tokenizer"):
+            tokenizer = tokenizer_or_processor.tokenizer
+            processor = tokenizer_or_processor
+        else:
+            tokenizer = tokenizer_or_processor
+            processor = None
+
         print(f"训练数据大小: {len(dataset['train'])}")
         print(f"验证数据大小: {len(dataset.get('validation', []))}")
         
@@ -99,7 +108,7 @@ def train(config):
             train_dataset=dataset["train"],
             eval_dataset=dataset.get("validation", None),
             tokenizer=tokenizer,
-            data_collator=get_data_collator(tokenizer)
+            data_collator=get_data_collator(tokenizer_or_processor)
         )
         
         # 开始训练
@@ -110,6 +119,9 @@ def train(config):
         # 保存模型
         print("保存模型...")
         save_lora_model(model, os.path.join(config.output_dir, "lora_model"))
+        if processor:
+            print("保存 Processor...")
+            processor.save_pretrained(os.path.join(config.output_dir, "lora_model"))
         print("模型保存完成!")
         
         # 评估模型

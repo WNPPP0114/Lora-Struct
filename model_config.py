@@ -1,6 +1,6 @@
 import os
 import traceback
-from transformers import AutoModelForCausalLM, AutoConfig
+from transformers import AutoModelForCausalLM, AutoModelForVision2Seq, AutoConfig
 from peft import LoraConfig, get_peft_model, TaskType
 
 def load_model_with_lora(config):
@@ -45,7 +45,27 @@ def load_model_with_lora(config):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"使用设备: {device}")
         
-        model = AutoModelForCausalLM.from_pretrained(
+        # 调试：打印 config.model_type
+        print(f"Config model_type: {getattr(config, 'model_type', 'None')}")
+        print(f"Model config model_type: {model_config.model_type}")
+        
+        # 根据模型类型选择加载类
+        # 优先使用 config 中的设置，如果未设置或不明确，则根据 model_config 推断
+        is_vlm = False
+        if getattr(config, "model_type", "llm") == "vlm":
+            is_vlm = True
+        elif model_config.model_type in ["qwen2_vl", "qwen3_vl", "llava", "idefics", "vip_llava"]:
+            print(f"检测到 VLM 模型架构: {model_config.model_type}，自动切换为 VLM 模式")
+            is_vlm = True
+            
+        if is_vlm:
+            print("使用 AutoModelForVision2Seq 加载 VLM 模型")
+            model_class = AutoModelForVision2Seq
+        else:
+            print("使用 AutoModelForCausalLM 加载 LLM 模型")
+            model_class = AutoModelForCausalLM
+
+        model = model_class.from_pretrained(
             config.model_name_or_path,
             config=model_config,
             torch_dtype=torch_dtype,
@@ -63,24 +83,25 @@ def load_model_with_lora(config):
         print(f"LoRA dropout: {config.lora_dropout}")
         
         # 根据模型类型设置目标模块
-        model_type = model_config.model_type
-        if model_type == "distilgpt2":
-            # DistilGPT2 模型使用的模块名称
-            target_modules = ["q_lin", "v_lin"]
-        elif model_type == "gpt2":
-            # GPT2 模型使用的模块名称
-            target_modules = ["c_attn"]
-        elif model_type in ["qwen3", "llama", "mistral"]:
-            # Qwen3、Llama 和 Mistral 模型使用的模块名称
-            target_modules = ["q_proj", "v_proj"]
-        else:
-            # 默认使用配置中的模块名称
+        # 优先使用 config.yaml 中的配置
+        if hasattr(config, "target_modules") and config.target_modules:
             target_modules = config.target_modules
+        else:
+            # 如果 config 中未指定，则使用默认策略
+            model_type = model_config.model_type
+            if model_type == "distilgpt2":
+                target_modules = ["q_lin", "v_lin"]
+            elif model_type == "gpt2":
+                target_modules = ["c_attn"]
+            elif model_type in ["qwen3", "llama", "mistral", "qwen2_vl"]:
+                target_modules = ["q_proj", "v_proj"]
+            else:
+                target_modules = ["q_proj", "v_proj"]
         
         print(f"目标模块: {target_modules}")
         
         lora_config = LoraConfig(
-            task_type=TaskType.CAUSAL_LM,
+            task_type=TaskType.CAUSAL_LM, # VLM 通常也兼容 CAUSAL_LM 的 LoRA 配置
             inference_mode=False,
             r=config.lora_r,
             lora_alpha=config.lora_alpha,
@@ -161,7 +182,22 @@ def load_lora_model(model_name_or_path, lora_model_path):
         
         # 加载基础模型
         print(f"加载基础模型: {model_name_or_path}")
-        model = AutoModelForCausalLM.from_pretrained(model_name_or_path)
+        
+        # 尝试检测模型类型
+        try:
+            from transformers import AutoConfig
+            config = AutoConfig.from_pretrained(model_name_or_path)
+            architectures = getattr(config, "architectures", [])
+            is_vlm = any("Vision" in arch or "Qwen2VL" in arch or "Qwen3VL" in arch for arch in architectures)
+        except:
+            is_vlm = False
+            
+        if is_vlm:
+            from transformers import AutoModelForVision2Seq
+            model = AutoModelForVision2Seq.from_pretrained(model_name_or_path, torch_dtype="auto", device_map="auto")
+        else:
+            model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype="auto", device_map="auto")
+            
         print("基础模型加载完成")
         
         # 加载 LoRA 权重
