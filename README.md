@@ -291,9 +291,13 @@ python main.py --task train
 
 ### 7. 评估模型
 
+训练完成后，可以评估模型在验证集上的表现。脚本会自动根据 `config.yaml` 中的配置推断 LoRA 模型路径。
+
 ```powershell
-python main.py --task evaluate --lora_model_path ./output/lora_model
+python main.py --task evaluate
 ```
+
+评估结果将保存到输出目录下的 `eval_results.json` 文件中。
 
 ### 8. 使用模型推理
 
@@ -304,10 +308,10 @@ python main.py --task evaluate --lora_model_path ./output/lora_model
 | 场景 | 适用情况 | 命令 |
 |------|---------|------|
 | **基本问答** | 日常简单问题，不需要详细回答 | `python main.py --task inference` |
-| **详细回答** | 需要详细解释的问题，如教程、步骤说明等 | `python main.py --task inference --max_new_tokens 2000` |
-| **创意回答** | 需要创意性的问题，如故事创作、创意建议等 | `python main.py --task inference --max_new_tokens 1000 --temperature 1.0 --top_p 0.95` |
-| **准确回答** | 需要准确信息的问题，如事实性问题、技术细节等 | `python main.py --task inference --max_new_tokens 1000 --temperature 0.1 --top_p 0.8` |
-| **平衡设置** | 大多数日常问题，兼顾准确性和自然表达 | `python main.py --task inference --max_new_tokens 1000 --temperature 0.7 --top_p 0.95` |
+| **详细回答** | 需要详细解释的问题，如教程、步骤说明等 | `python main.py --task inference --max_new_tokens 4000` |
+| **创意回答** | 需要创意性的问题，如故事创作、创意建议等 | `python main.py --task inference --max_new_tokens 2000 --temperature 1.0 --top_p 0.95` |
+| **准确回答** | 需要准确信息的问题，如事实性问题、技术细节等 | `python main.py --task inference --max_new_tokens 2000 --temperature 0.1 --top_p 0.8` |
+| **平衡设置** | 大多数日常问题，兼顾准确性和自然表达 | `python main.py --task inference --max_new_tokens 2000 --temperature 0.7 --top_p 0.95` |
 | **比较模型** | 比较原始模型和微调模型的表现差异 | 使用微调模型：`python main.py --task inference`<br>使用原始模型：`python main.py --task inference --use_original_model` |
 
 ## 🎯 LoRA 工作流程详解
