@@ -91,17 +91,17 @@ python -c "import torch; print('PyTorch 版本:', torch.__version__); print('CUD
 #### 3.1 使用本地模型（推荐）
 
 将下载好的模型放在项目根目录下，例如：
-- `./Qwen3-1.7B`
-- `./Qwen3-4B`
+- `./Qwen3-1.7B` - [Hugging Face 模型链接](https://huggingface.co/Qwen/Qwen3-1.7B)
+- `./Qwen3-4B` - [Hugging Face 模型链接](https://huggingface.co/Qwen/Qwen3-4B)
 - `./Qwen3-VL-2B-Instruct` - [Hugging Face 模型链接](https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct)
-- `./Qwen3-VL-4B-Instruct`
+- `./Qwen3-VL-4B-Instruct` - [Hugging Face 模型链接](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct)
 
 ### 3.2 使用 Hugging Face Hub 模型
 
 直接在配置文件中设置模型名称，例如：
-- `distilgpt2`
-- `gpt2`
-- `facebook/opt-125m`
+- `distilgpt2` - [Hugging Face 模型链接](https://huggingface.co/distilgpt2)
+- `gpt2` - [Hugging Face 模型链接](https://huggingface.co/gpt2)
+- `facebook/opt-125m` - [Hugging Face 模型链接](https://huggingface.co/facebook/opt-125m)
 - `Qwen/Qwen3-VL-2B-Instruct` - [Hugging Face 模型链接](https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct)
 
 ### 4. 数据准备
