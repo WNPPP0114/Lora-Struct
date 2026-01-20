@@ -1,0 +1,33 @@
+{
+    "mapping_type": "positional",
+    "positions": [
+        {
+            "field": "status",
+            "map": {
+                "0": "No Leakage",
+                "1": "Leakage"
+            }
+        },
+        {
+            "field": "sub_type",
+            "map": {
+                "0": "Normal",
+                "1": "Ambient Dust",
+                "2": "Light Beams",
+                "3": "High Pressure",
+                "4": "Low Pressure"
+            }
+        },
+        {
+            "field": "is_night_mode",
+            "map": {
+                "0": false,
+                "1": true
+            }
+        }
+    ],
+    "defaults": {
+        "confidence": 1.0,
+        "reasoning": "Auto-generated based on filename tags."
+    }
+}
