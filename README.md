@@ -720,5 +720,5 @@ python main.py --task inference --lora_model_path ./output/lora_model --max_new_
 ---
 
 <div align="center">
-  <p>? 如果这个项目对您有帮助，请给它一个星标！</p>
+  <p>⭐ 如果这个项目对您有帮助，请给它一个星标！</p>
 </div>
