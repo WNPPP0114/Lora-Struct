@@ -34,6 +34,7 @@
 ├── train.py              # 训练脚本
 ├── evaluate.py           # 评估脚本
 ├── inference.py          # 推理脚本
+├── requirements.txt      # 环境依赖包
 └── README.md             # 项目说明文档
 ```
 
