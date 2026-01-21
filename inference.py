@@ -63,15 +63,15 @@ def inference(config):
         # 使用原始模型
         print(f"加载原始模型: {config.model_name_or_path}")
         if is_vlm:
-            from transformers import AutoModelForVision2Seq
-            model = AutoModelForVision2Seq.from_pretrained(config.model_name_or_path, torch_dtype="auto", device_map="auto")
+            from transformers import AutoModelForImageTextToText
+            model = AutoModelForImageTextToText.from_pretrained(config.model_name_or_path, torch_dtype="auto", device_map="auto")
         else:
             from transformers import AutoModelForCausalLM
             model = AutoModelForCausalLM.from_pretrained(config.model_name_or_path, torch_dtype="auto", device_map="auto")
         print("原始模型加载完成")
     else:
         # 使用带有 LoRA 权重的模型
-        model = load_lora_model(config.model_name_or_path, config.lora_model_path)
+        model = load_lora_model(config.model_name_or_path, config.lora_model_path, config)
     
     model.eval()
     

@@ -29,7 +29,7 @@ def evaluate(config):
         model=model,
         args=training_args,
         eval_dataset=dataset.get("validation", None),
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=get_data_collator(tokenizer)
     )
     

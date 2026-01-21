@@ -1,7 +1,9 @@
 # 模型相关参数
-model_name_or_path: "./Qwen3-1.7B"  # 预训练模型路径，使用本地模型
-model_type: "llm"  # 模型类型: "llm" 或 "vlm"
-torch_dtype: "float16"  # 模型数据类型，GPU 上使用 float16，CPU 上会自动切换为 float32
+model_name_or_path: "./Qwen3-VL-4B-Instruct"  # 预训练模型路径
+model_type: "vlm"  # 模型类型: "llm" 或 "vlm" (Qwen3-VL 是 VLM)
+dtype: "float16"  # 模型数据类型
+train_quantization_bit: 8  # 训练时量化位数: 4, 8 或 null (如果不使用量化则为 null)
+inference_quantization_bit: 8  # 推理时量化位数: 4, 8 或 null (如果不使用量化则为 null)
 
 # 数据相关参数
 dataset_name: null  # 数据集名称，null 表示使用本地数据

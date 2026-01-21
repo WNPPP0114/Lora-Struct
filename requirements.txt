@@ -8,3 +8,4 @@ pyyaml
 accelerate
 safetensors
 scipy
+bitsandbytes>=0.43.0

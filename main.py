@@ -28,7 +28,9 @@ class Config:
         """
         # 模型相关参数
         self.model_name_or_path = "facebook/opt-125m"
-        self.torch_dtype = "float16"
+        self.dtype = "float16"
+        self.train_quantization_bit = None  # 训练时量化位数: 4, 8 or None
+        self.inference_quantization_bit = None  # 推理时量化位数: 4, 8 or None
         
         # 数据相关参数
         self.dataset_name = None
@@ -81,6 +83,7 @@ class Config:
         
         # LoRA 推理相关参数
         self.lora_model_path = None
+        self.use_original_model = False
         
         # 推理相关参数
         self.max_new_tokens = 100

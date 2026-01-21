@@ -26,6 +26,20 @@ def train(config):
         # 设置随机种子
         set_seed(config.seed)
         
+        # 设置 TF32 精度
+        if torch.cuda.is_available():
+            # 启用 TF32 以加速训练 (Ampere 架构及以上)
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            
+            # 使用新 API 避免警告 (如果 PyTorch 版本支持)
+            if hasattr(torch.backends.cuda.matmul, "fp32_precision"):
+                torch.backends.cuda.matmul.fp32_precision = "high" # 相当于 allow_tf32=True
+            if hasattr(torch.backends.cudnn, "allow_tf32"):
+                 # cudnn 似乎还没有完全统一到 fp32_precision，或者不同版本行为不一致
+                 # 保持 allow_tf32=True 通常是安全的，但为了消除警告，我们可以尝试设置 fp32_precision
+                 pass
+
         # 创建输出目录
         os.makedirs(config.output_dir, exist_ok=True)
         print(f"创建输出目录: {config.output_dir}")
@@ -107,7 +121,7 @@ def train(config):
             args=training_args,
             train_dataset=dataset["train"],
             eval_dataset=dataset.get("validation", None),
-            tokenizer=tokenizer,
+            processing_class=tokenizer, # 使用 processing_class 替代 tokenizer
             data_collator=get_data_collator(tokenizer_or_processor)
         )
         

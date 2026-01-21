@@ -1,7 +1,7 @@
 import os
 import traceback
-from transformers import AutoModelForCausalLM, AutoModelForVision2Seq, AutoConfig
-from peft import LoraConfig, get_peft_model, TaskType
+from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoConfig, BitsAndBytesConfig
+from peft import LoraConfig, get_peft_model, TaskType, prepare_model_for_kbit_training
 
 def load_model_with_lora(config):
     """
@@ -30,12 +30,12 @@ def load_model_with_lora(config):
         
         # 加载预训练模型
         print(f"加载预训练模型: {config.model_name_or_path}")
-        print(f"使用数据类型: {config.torch_dtype}")
+        print(f"使用数据类型: {config.dtype}")
         
-        # 转换 torch_dtype
-        if config.torch_dtype == "float16":
+        # 转换 dtype
+        if config.dtype == "float16":
             torch_dtype = "float16"
-        elif config.torch_dtype == "bfloat16":
+        elif config.dtype == "bfloat16":
             torch_dtype = "bfloat16"
         else:
             torch_dtype = "float32"
@@ -59,22 +59,102 @@ def load_model_with_lora(config):
             is_vlm = True
             
         if is_vlm:
-            print("使用 AutoModelForVision2Seq 加载 VLM 模型")
-            model_class = AutoModelForVision2Seq
+            print("使用 AutoModelForImageTextToText 加载 VLM 模型")
+            model_class = AutoModelForImageTextToText
         else:
             print("使用 AutoModelForCausalLM 加载 LLM 模型")
             model_class = AutoModelForCausalLM
 
+        # 量化配置
+        quantization_config = None
+        quantization_bit = None
+        if hasattr(config, "train_quantization_bit") and config.train_quantization_bit is not None:
+            quantization_bit = config.train_quantization_bit
+        elif hasattr(config, "quantization_bit") and config.quantization_bit is not None:
+            quantization_bit = config.quantization_bit
+        
+        if quantization_bit is not None:
+            print(f"启用 {quantization_bit}-bit 量化加载")
+            try:
+                q_bit = int(quantization_bit)
+                if q_bit == 8:
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_8bit=True,
+                        llm_int8_threshold=6.0
+                    )
+                elif q_bit == 4:
+                    # 确定计算类型
+                    bnb_4bit_compute_dtype = torch.float16
+                    if config.dtype == "bfloat16":
+                        bnb_4bit_compute_dtype = torch.bfloat16
+                    
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_compute_dtype=bnb_4bit_compute_dtype,
+                        bnb_4bit_use_double_quant=True,
+                        bnb_4bit_quant_type="nf4"
+                    )
+            except ValueError:
+                print(f"警告: 无效的量化位数 {quantization_bit}，忽略量化配置")
+
+        # 如果启用了 bitsandbytes 量化，需要先移除模型配置中的 quantization_config
+        # 否则会与 FineGrainedFP8Config 冲突
+        if quantization_config and hasattr(model_config, "quantization_config"):
+            print("检测到模型自带 quantization_config，正在移除以应用 bitsandbytes 量化...")
+            del model_config.quantization_config
+
+        # 加载模型参数
+        load_kwargs = {
+            "config": model_config,
+            "dtype": torch_dtype,
+            "low_cpu_mem_usage": True,
+        }
+        
+        if quantization_config:
+            load_kwargs["quantization_config"] = quantization_config
+            load_kwargs["device_map"] = "auto"
+            print("使用 device_map='auto' 进行量化加载")
+
         model = model_class.from_pretrained(
             config.model_name_or_path,
-            config=model_config,
-            torch_dtype=torch_dtype,
-            low_cpu_mem_usage=True
+            **load_kwargs
         )
         
-        # 将模型移到指定设备
-        model.to(device)
+        # 如果没有使用 device_map (即没有量化)，则手动移动到设备
+        if not quantization_config:
+            model.to(device)
+            
         print("预训练模型加载完成")
+        
+        # 如果使用了量化，需要预处理模型以进行 k-bit 训练
+        if quantization_config:
+            print("预处理模型以进行 k-bit 训练...")
+            model = prepare_model_for_kbit_training(model)
+        
+        # 针对 FP8 模型的特殊处理
+        # 如果模型本身是 FP8 量化的（例如 Qwen3-VL-4B-Instruct-FP8），但没有使用 bitsandbytes 量化加载
+        # 我们需要确保模型处于可以训练的状态。
+        # 目前 transformers 对 FP8 模型的训练支持可能有限，通常需要将其视为 float16/bfloat16 进行 LoRA 微调
+        # 或者确保 requires_grad 设置正确。
+        # 注意：如果模型加载时已经是 FP8，通常意味着它使用了某种量化后端。
+        # 如果遇到 "QuantizationMethod.FP8 ... do not support training" 错误，
+        # 可能需要禁用量化配置或者使用特定的加载方式。
+        
+        # 检查是否是 FP8 模型且未启用 bitsandbytes 量化
+        if "FP8" in config.model_name_or_path and not quantization_config:
+             print("检测到 FP8 模型，尝试启用梯度检查点以支持训练...")
+             # 某些情况下，启用梯度检查点可以绕过一些限制，或者帮助节省显存
+             if hasattr(model, "gradient_checkpointing_enable"):
+                 model.gradient_checkpointing_enable()
+             
+             # 尝试禁用 FP8 量化配置以支持训练
+             # 如果模型加载时带有 quantization_config 且 method 为 FP8，可能会阻止训练
+             if hasattr(model, "quantization_method"):
+                 print(f"模型量化方法: {model.quantization_method}")
+                 # 这是一个 hack，尝试绕过 transformers 的检查
+                 # 注意：这可能会导致显存增加，因为模型可能会被反量化
+                 # 但对于 Qwen3-VL-FP8，它可能只是权重是 FP8，计算时会转为 BF16/FP16
+                 pass
         
         # 配置 LoRA
         print("配置 LoRA...")
@@ -162,16 +242,18 @@ def save_lora_model(model, output_dir):
         print(f"保存模型时发生错误: {e}")
         traceback.print_exc()
 
-def load_lora_model(model_name_or_path, lora_model_path):
+def load_lora_model(model_name_or_path, lora_model_path, config=None):
     """
     加载 LoRA 模型
     Args:
         model_name_or_path: 基础模型路径
         lora_model_path: LoRA 模型路径
+        config: 配置对象，包含 quantization_bit 等参数
     Returns:
         model: 加载了 LoRA 的模型
     """
     try:
+        import torch
         from peft import PeftModel
         
         # 检查路径是否存在
@@ -186,17 +268,61 @@ def load_lora_model(model_name_or_path, lora_model_path):
         # 尝试检测模型类型
         try:
             from transformers import AutoConfig
-            config = AutoConfig.from_pretrained(model_name_or_path)
-            architectures = getattr(config, "architectures", [])
+            model_config = AutoConfig.from_pretrained(model_name_or_path)
+            architectures = getattr(model_config, "architectures", [])
             is_vlm = any("Vision" in arch or "Qwen2VL" in arch or "Qwen3VL" in arch for arch in architectures)
         except:
             is_vlm = False
-            
+        
+        # 量化配置
+        quantization_config = None
+        quantization_bit = None
+        if config:
+            if hasattr(config, "inference_quantization_bit") and config.inference_quantization_bit is not None:
+                quantization_bit = config.inference_quantization_bit
+            elif hasattr(config, "quantization_bit") and config.quantization_bit is not None:
+                quantization_bit = config.quantization_bit
+        
+        if quantization_bit is not None:
+            print(f"启用 {quantization_bit}-bit 量化加载")
+            try:
+                q_bit = int(quantization_bit)
+                if q_bit == 8:
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_8bit=True,
+                        llm_int8_threshold=6.0
+                    )
+                elif q_bit == 4:
+                    # 确定计算类型
+                    bnb_4bit_compute_dtype = torch.float16
+                    if config and hasattr(config, "dtype") and config.dtype == "bfloat16":
+                        bnb_4bit_compute_dtype = torch.bfloat16
+                    
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_compute_dtype=bnb_4bit_compute_dtype,
+                        bnb_4bit_use_double_quant=True,
+                        bnb_4bit_quant_type="nf4"
+                    )
+            except ValueError:
+                print(f"警告: 无效的量化位数 {quantization_bit}，忽略量化配置")
+        
+        # 加载模型参数
+        load_kwargs = {
+            "dtype": "auto",
+            "low_cpu_mem_usage": True,
+        }
+        
+        if quantization_config:
+            load_kwargs["quantization_config"] = quantization_config
+            load_kwargs["device_map"] = "auto"
+            print("使用 device_map='auto' 进行量化加载")
+        
         if is_vlm:
-            from transformers import AutoModelForVision2Seq
-            model = AutoModelForVision2Seq.from_pretrained(model_name_or_path, torch_dtype="auto", device_map="auto")
+            from transformers import AutoModelForImageTextToText
+            model = AutoModelForImageTextToText.from_pretrained(model_name_or_path, **load_kwargs)
         else:
-            model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype="auto", device_map="auto")
+            model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **load_kwargs)
             
         print("基础模型加载完成")
         

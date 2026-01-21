@@ -1,7 +1,7 @@
 # LoRA 大模型微调框架
 
 <div align="center">
-  <img src="https://img.shields.io/badge/Python-3.9+-blue.svg" alt="Python Version">
+  <img src="https://img.shields.io/badge/Python-3.10+-blue.svg" alt="Python Version">
   <img src="https://img.shields.io/badge/PyTorch-2.5.1+-red.svg" alt="PyTorch Version">
   <img src="https://img.shields.io/badge/Transformers-4.40.0+-green.svg" alt="Transformers Version">
   <img src="https://img.shields.io/badge/PEFT-0.10.0+-purple.svg" alt="PEFT Version">
@@ -44,6 +44,11 @@
 - **内存友好**：支持 FP16 训练，大幅降低内存使用
 - **即插即用**：训练生成的 LoRA 模块可灵活拼装到原始模型
 - **多模型支持**：兼容 Qwen3、GPT2、DistilGPT2 等多种 LLM，以及 Qwen3-VL 等 VLM（视觉语言模型）
+- **FP8 模型支持（待优化）**：支持 FP8 量化模型，进一步降低内存使用
+- **量化增强**：内置支持 8-bit 和 4-bit 量化加载，适用于显存受限的场景。**训练和推理时**可分开控制，可显著减少显存使用，使预训练大模型能够在较小显存的硬件上运行。
+  - **训练时**：通过 `config.yaml` 中的 `train_quantization_bit` 参数控制，**预训练模型**的权重以量化精度加载，减少训练时的显存占用，但 LoRA 适配器仍以全精度（float16）训练，平衡了内存使用和训练质量。
+  - **推理时**：通过 `config.yaml` 中的 `inference_quantization_bit` 参数控制，**预训练模型**的权重以量化精度加载，可根据部署环境独立调整量化配置，无需与训练时保持一致。
+  - **精度区分**：量化位数越低（如 4-bit），内存使用越少，但可能对模型性能有轻微影响；位数越高（如 8-bit），内存使用稍高，但模型性能更接近原始精度。
 - **完整流程**：从数据准备到模型训练、评估和推理的全流程支持
 - **易于扩展**：模块化设计，便于添加新功能和支持新模型
 
@@ -51,10 +56,10 @@
 
 ### 1. 环境准备
 
-确保您已经安装了 Python 3.9+ 环境，并且创建了名为 `Lora` 的 Conda 环境：
+确保您已经安装了 Python 3.10+ 环境，并且创建了名为 `Lora` 的 Conda 环境（本文档以3.11为例）：
 
 ```powershell
-conda create -n Lora python=3.9
+conda create -n Lora python=3.11
 conda activate Lora
 ```
 
@@ -84,12 +89,6 @@ pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121
 
 ```powershell
 pip install -r requirements.txt
-```
-
-或者手动安装核心依赖：
-
-```powershell
-pip install transformers datasets peft pyyaml accelerate safetensors
 ```
 
 #### 2.3 验证安装
@@ -264,7 +263,22 @@ data/vlm/
 # 模型相关参数
 model_name_or_path: "./Qwen3-1.7B"  # 模型路径
 model_type: "llm"  # 模型类型，llm（大语言模型）或 vlm（视觉语言模型）
-torch_dtype: "float16"  # 数据类型，GPU 上使用 float16，CPU 上使用 float32
+dtype: "float16"  # 数据类型，GPU 上使用 float16，CPU 上使用 float32
+train_quantization_bit: null  # 训练时量化位数：4, 8 或 null（如果不使用量化则为 null），用于减少训练时的显存使用
+inference_quantization_bit: null  # 推理时量化位数：4, 8 或 null（如果不使用量化则为 null），用于减少推理时的显存使用
+
+# 关于 dtype 和 quantization_bit 的区别
+# - dtype: 基础数据类型，指定模型权重和计算时使用的精度（如 float16、float32）
+# - quantization_bit: 模型压缩技术，通过 bitsandbytes 库在加载模型时对权重进行量化，进一步减少内存使用
+# 两者的关系：
+# 1. 即使使用了 quantization_bit，dtype 仍然会影响计算精度和内存使用
+# 2. quantization_bit 是在 dtype 的基础上进一步优化内存使用的技术
+# 3. 例如：使用 dtype: "float16" + quantization_bit: 8，可以获得比单独使用 float16 更低的内存使用
+
+# 数据相关参数
+# - dataset_name: 数据集名称，null 表示使用本地数据。如果设置为 Hugging Face 数据集名称（如 "imdb"），系统会自动下载该数据集
+# - dataset_config_name: 数据集配置名称，仅当使用 Hugging Face 数据集时需要设置
+# - data_dir: 本地数据目录，当 dataset_name 为 null 时使用，系统会从该目录加载本地数据
 
 # 训练相关参数
 output_dir: "./output"  # 输出目录，保存模型权重和评估结果
@@ -290,9 +304,9 @@ target_modules: ["q_proj", "v_proj"]
 
 | 硬件类型 | 推荐配置 |
 |---------|---------|
-| **CPU 训练** | `torch_dtype: "float32"`, `per_device_train_batch_size: 1` |
-| **小 GPU (8GB)** | `torch_dtype: "float16"`, `per_device_train_batch_size: 2`, `gradient_accumulation_steps: 4` |
-| **大 GPU (16GB+)** | `torch_dtype: "float16"`, `per_device_train_batch_size: 4`, `gradient_accumulation_steps: 2` |
+| **CPU 训练** | `dtype: "float32"`, `per_device_train_batch_size: 1` |
+| **小 GPU (8GB)** | `dtype: "float16"`, `per_device_train_batch_size: 2`, `gradient_accumulation_steps: 4` |
+| **大 GPU (16GB+)** | `dtype: "float16"`, `per_device_train_batch_size: 4`, `gradient_accumulation_steps: 2` |
 
 ### 6. 开始训练
 
@@ -337,7 +351,7 @@ python main.py --task evaluate
 1. **配置 LoRA 参数**：设置 lora_r、lora_alpha、target_modules 等参数
 2. **加载原始模型**：根据模型类型选择加载方式
    - LLM：使用 `AutoModelForCausalLM.from_pretrained` 加载原始模型
-   - VLM：使用 `AutoModelForVision2Seq.from_pretrained` 加载原始模型
+   - VLM：使用 `AutoModelForImageTextToText.from_pretrained` 加载原始模型
 3. **创建 LoRA 配置**：使用 `LoraConfig` 创建 LoRA 配置
 4. **应用 LoRA 到模型**：使用 `get_peft_model` 将 LoRA 配置应用到原始模型
 5. **执行训练**：使用 `Trainer` 执行模型训练
@@ -356,7 +370,41 @@ python main.py --task evaluate
 3. **参数高效**：只训练和存储 LoRA 相关参数，原始模型权重保持不变
 4. **内存高效**：拼装过程不需要修改原始模型权重，只是在计算时应用 LoRA 调整
 
-## 📊 命令行参数
+## � 常见问题：LoRA 与预训练模型的关系
+
+### LoRA 为什么依赖预训练模型的资源？
+
+许多用户会有这样的疑问："LoRA 不是独立于预训练模型的吗，怎么训练消耗的资源还和预训练模型有关呢？"
+
+这是一个非常重要的问题，理解这一点对于合理配置训练环境至关重要：
+
+#### 1. 预训练模型需要完整加载到内存
+- **模型加载**：即使只训练 LoRA 适配器，整个预训练模型仍然需要加载到 GPU 内存中，因为前向传播和反向传播都需要通过完整的模型架构
+- **内存占用**：预训练模型的大小直接决定了基础内存占用，例如 4B 参数的模型在 float16 精度下约占 8GB 内存，加上优化器状态和中间激活值，实际内存需求会更大
+
+#### 2. 计算过程依赖预训练模型
+- **前向传播**：输入数据需要通过完整的预训练模型进行前向传播，生成中间激活值
+- **反向传播**：虽然只更新 LoRA 适配器的参数，但反向传播仍然需要计算整个模型的梯度流
+- **批量大小**：预训练模型的大小会限制可使用的批量大小，因为更大的模型需要更多内存来存储中间激活值
+
+#### 3. 精度配置影响内存使用
+- **量化技术**：通过对预训练模型进行量化（如 8-bit 或 4-bit 量化），可以显著减少内存使用
+- **混合精度训练**：使用 float16 等低精度格式也可以减少内存占用
+- **计算效率**：不同精度的计算速度也会影响训练时间
+
+#### 4. 模型架构的影响
+- **层数和隐藏维度**：更深、更宽的模型需要更多的计算资源
+- **注意力机制**：包含注意力机制的模型（如 Transformer）在计算时内存使用会随序列长度增长而显著增加
+- **多模态模型**：像 Qwen3-VL 这样的多模态模型，由于包含视觉编码器，内存需求会更高
+
+### 实际应用建议
+
+- **根据显存选择模型**：如果显存有限，优先选择参数量较小的预训练模型
+- **合理使用量化**：通过 `train_quantization_bit` 参数对预训练模型进行量化，减少内存使用
+- **调整批量大小**：根据预训练模型的大小和显存情况，调整 `per_device_train_batch_size` 参数
+- **监控内存使用**：训练过程中注意监控显存使用情况，及时调整配置
+
+## �📊 命令行参数
 
 您可以通过命令行参数覆盖 `config.yaml` 中的配置，方便快速实验。
 
@@ -397,6 +445,97 @@ output/
 - **checkpoint-X**: 包含完整的训练状态，可用于从中断处恢复训练。
 - **lora_model**: 仅包含 LoRA 权重和配置，体积小，用于最终推理。
 
+## 📊 模型精度与内存优化指南
+
+### 不同模型的默认精度
+
+| 模型 | 微调时的精度 | 推理时的精度 | 内存使用 |
+|------|-------------|-------------|----------|
+| `Qwen3-VL-4B-Instruct` | `float16` (默认) | `float16` (默认) | 高 |
+| `Qwen3-VL-4B-Instruct-FP8` | FP8 权重 + `float16` 计算 | FP8 权重 + `float16` 计算 | 中 |
+| `Qwen3-VL-4B-Instruct` + `train_quantization_bit: 8` | 8-bit 量化 | 8-bit 量化 | 低 |
+| `Qwen3-VL-4B-Instruct` + `train_quantization_bit: 4` | 4-bit 量化 | 4-bit 量化 | 极低 |
+
+### 精度配置说明
+
+1. **基础精度配置 (`dtype`)**：
+   - 控制模型的计算精度，默认为 `float16`
+   - 即使使用 FP8 模型或量化，`dtype` 仍然影响计算精度
+   - 建议值：`float16` (GPU) 或 `float32` (CPU)
+
+2. **量化配置**：
+   - **训练时量化 (`train_quantization_bit`)**：控制训练时模型权重的存储精度，通过 `bitsandbytes` 库实现
+   - **推理时量化 (`inference_quantization_bit`)**：控制推理时模型权重的存储精度，通过 `bitsandbytes` 库实现
+   - 可选值：`null` (不量化)、`8` (8-bit 量化)、`4` (4-bit 量化)
+   - **独立控制**：训练和推理时可设置不同的量化位数，根据各自环境的显存情况灵活调整
+   - **技术实现**：
+     - **8-bit 量化**：使用 `BitsAndBytesConfig(load_in_8bit=True, llm_int8_threshold=6.0)` 实现
+     - **4-bit 量化**：使用 `BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16, bnb_4bit_use_double_quant=True, bnb_4bit_quant_type="nf4")` 实现
+     - **模型加载**：通过 `from_pretrained` 方法的 `quantization_config` 参数应用量化配置
+     - **设备映射**：量化加载时自动使用 `device_map="auto"` 进行设备分配
+   - **技术原理**：
+     - **内存占用减少**：通过将**预训练模型**的权重从 float16 (2字节) 压缩到 int8 (1字节) 或 int4 (0.5字节)，直接减少 50-75% 的内存使用
+     - **计算优化**：量化后的数据在 GPU 上处理更快，特别是在支持 INT8 计算的硬件上
+     - **训练时平衡**：**预训练模型**的权重以量化精度存储，但 LoRA 适配器仍以全精度 (float16) 训练，平衡了内存使用和训练质量
+     - **推理时优化**：**预训练模型**的权重和 LoRA 适配器均以量化精度加载，进一步减少内存使用，适合部署到资源受限的环境
+
+3. **FP8 模型的特殊性**：
+   - 加载时会使用 FP8 权重，但计算仍会使用 `torch_dtype` 指定的精度
+   - 可以在此基础上进一步使用 `train_quantization_bit` 或 `inference_quantization_bit` 进行量化，获得更低的内存使用
+
+### 内存优化建议
+
+- **显存充足 (24GB+)**：使用 `Qwen3-VL-4B-Instruct`，设置 `train_quantization_bit: null` 和 `inference_quantization_bit: null`
+- **显存中等 (16GB)**：使用 `Qwen3-VL-4B-Instruct`，设置 `train_quantization_bit: 8` 和 `inference_quantization_bit: 8`
+- **显存有限 (8GB)**：使用 `Qwen3-VL-4B-Instruct`，设置 `train_quantization_bit: 4` 和 `inference_quantization_bit: 4`
+
+### 精度与性能权衡
+
+| 精度级别 | 性能表现 | 内存使用 | 适用场景 |
+|---------|---------|---------|----------|
+| 高精度 (float16) | 最佳 | 最高 | 显存充足 (24GB+) |
+| 8-bit 量化 | 接近原始精度 | 中等 | 显存中等 (16GB) |
+| 4-bit 量化 | 略有下降 | 较低 | 显存有限 (8GB) |
+| FP8 模型 | 接近 8-bit 精度 | 中等 | 平衡性能与内存 |
+
+### 预训练模型压缩对功能的影响
+
+| 量化类型 | 功能影响 | 内存减少比例 | 适用任务 |
+|---------|---------|------------|----------|
+| 8-bit 量化 | 几乎无影响，保持原始模型所有能力 | 约 50% | 所有任务，包括复杂的多模态理解 |
+| 4-bit 量化 | 对复杂任务有轻微影响，常见任务影响不大 | 约 75% | 简单任务，如文本分类、问答 |
+| FP8 模型 | 功能保留程度较高 | 约 50% | 平衡性能与内存的场景 |
+
+### 参数权衡表
+
+| 参数类别 | 参数名称 | 增大效果 | 减小效果 | 推荐范围 |
+|---------|---------|---------|---------|----------|
+| **训练相关** | `train_quantization_bit` | 提高模型性能，增加内存使用 | 减少内存使用，可能影响训练稳定性 | 4-8 (根据显存) |
+| | `per_device_train_batch_size` | 提高训练效率和模型性能，增加内存使用 | 减少内存使用，降低训练效率 | 1-8 (根据显存) |
+| | `num_train_epochs` | 提高模型性能，增加训练时间和内存占用 | 减少训练时间，可能降低模型性能 | 3-10 |
+| | `gradient_accumulation_steps` | 模拟更大批次，提高性能，增加内存使用 | 减少内存使用，降低模拟批次大小 | 1-4 |
+| **LoRA 相关** | `lora_r` | 提高模型适应能力，增加 LoRA 权重大小 | 减少内存使用，可能降低适应能力 | 4-32 |
+| | `lora_alpha` | 增强 LoRA 影响，可能导致过拟合 | 减少过拟合风险，可能降低影响 | 8-64 |
+| | `lora_dropout` | 减少过拟合，可能降低模型性能 | 提高模型性能，可能增加过拟合风险 | 0.0-0.2 |
+| **推理相关** | `inference_quantization_bit` | 提高推理质量，增加内存使用 | 减少内存使用，可能影响推理质量 | 4-8 (根据部署环境) |
+| | `max_new_tokens` | 生成更长文本，增加内存使用 | 减少内存使用，限制文本长度 | 100-1000 |
+| | `temperature` | 提高文本多样性，可能降低准确性 | 提高准确性，减少文本多样性 | 0.1-1.0 |
+
+### 选择建议
+
+| 场景 | 推荐配置 | 理由 |
+|------|---------|------|
+| 训练环境 | 根据 GPU 显存选择 `train_quantization_bit` 和批次大小 | 平衡训练稳定性和内存使用 |
+| 部署环境 | 根据目标设备内存限制选择 `inference_quantization_bit` | 适应部署环境的资源约束 |
+| 复杂任务 (VLM 多模态理解) | 使用较高量化位数 (8-bit) | 保持模型的复杂推理能力 |
+| 简单任务 (文本分类、问答) | 可使用较低量化位数 (4-bit) | 在内存受限情况下优先保证运行 |
+| 性能优先场景 | 较少量化或不量化 | 获得最佳模型性能 |
+| 内存优先场景 | 更激进的量化 (4-bit) | 在有限资源下保证模型运行 |
+
+### 最佳实践
+
+从最高精度开始，根据显存使用情况逐步降低精度，找到性能和内存使用的最佳平衡点。
+
 ## ⚠️ 注意事项
 
 1. **硬件要求**：
@@ -408,7 +547,17 @@ output/
      - 小型 VLM 模型（如 Qwen3-VL-2B-Instruct）：需要至少 16GB GPU 内存
      - 大型 VLM 模型（如 Qwen3-VL-4B-Instruct）：需要至少 24GB GPU 内存
 
-2. **数据格式**：
+2. **Windows 系统安装 triton 指南**：
+   - 某些依赖库（如 bitsandbytes）在 Windows 系统上可能需要 triton 库
+   - 直接使用 `pip install triton` 会报错，因为 PyPI 中没有适用于 Windows 的版本
+   - **解决方法**：
+     - 项目已包含 triton 3.0.0 版本的 Windows 包，位于 `./triton/` 目录
+     - 根据您的 Python 版本选择对应的包进行安装：
+       - Python 3.10：`pip install ./triton/triton-3.0.0-cp310-cp310-win_amd64.whl`
+       - Python 3.11：`pip install ./triton/triton-3.0.0-cp311-cp311-win_amd64.whl`
+       - Python 3.12：`pip install ./triton/triton-3.0.0-cp312-cp312-win_amd64.whl`
+
+3. **数据格式**：
    - **LLM 数据格式**：
      - 数据文件应为 JSON 格式
      - 每行包含 `text`（输入文本）和 `target`（目标输出）字段
@@ -544,6 +693,32 @@ python main.py --task inference --lora_model_path ./output/lora_model --max_new_
 
 ---
 
+
+
+## 📝 更新日志
+
+### 2026.1.21
+
+- **添加 FP8 模型支持**：新增对 FP8 模型的支持（如 `Qwen3-VL-4B-Instruct-FP8`），大幅降低内存使用。**注意：** `Qwen3-VL-4B-Instruct-FP8` 在 Windows 平台下依赖 Triton 环境，目前尚待优化，建议优先使用非 FP8 版本配合量化参数。
+- **增强量化功能**：内置支持 8-bit 和 4-bit 量化加载，适用于显存受限的场景。**训练和推理时**均可通过同一配置控制，可显著减少显存使用，使大模型能够在较小显存的硬件上运行
+- **更新依赖**：在 `requirements.txt` 中添加 `bitsandbytes>=0.43.0` 依赖
+- **配置优化**：在 `config.yaml` 中新增 `quantization_bit` 参数，支持动态配置量化位数
+- **文档完善**：
+  - 详细说明 `dtype` 和 `quantization_bit` 的区别与关系
+  - 补充数据相关参数（`dataset_name`、`dataset_config_name`、`data_dir`）的作用和使用场景
+  - 明确量化功能在训练和推理时的精度差异
+  - 添加模型精度与内存优化指南，清晰说明不同模型在训练和推理时的精度设置
+  - 添加 Windows 系统安装 triton 指南
+- **Python 版本更新**：将最低 Python 版本要求从 3.9+ 提升到 3.10+，以满足 triton 3.0.0 的依赖要求
+- **添加 triton 包**：在项目中添加 triton 3.0.0 版本的 Windows 包，位于 `./triton/` 目录，方便用户直接安装
+- **向后兼容**：所有修改均保持向后兼容，不影响原始模型的运行
+- **Bug 修复**：修复了 `--use_original_model` 参数在推理时未生效的问题，现在可以正确加载原始模型而不加载 LoRA 权重
+- **参数优化**：将 `torch_dtype` 参数更新为 `dtype`，以避免弃用警告，保持与 transformers 库的最新 API 兼容
+- **API 兼容性**：将 `Trainer` 类的 `tokenizer` 参数替换为 `processing_class`，以避免弃用警告，保持与 transformers 库的最新 API 兼容
+- **模型加载**：将 `AutoModelForVision2Seq` 类替换为 `AutoModelForImageTextToText`，以避免弃用警告，保持与 transformers 库的最新 API 兼容
+
+---
+
 <div align="center">
-  <p>⭐ 如果这个项目对您有帮助，请给它一个星标！</p>
+  <p>? 如果这个项目对您有帮助，请给它一个星标！</p>
 </div>
