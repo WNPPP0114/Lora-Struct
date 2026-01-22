@@ -28,6 +28,7 @@ class Config:
         """
         # 模型相关参数
         self.model_name_or_path = "facebook/opt-125m"
+        self.device = "auto"  # 默认自动分配
         self.dtype = "float16"
         self.train_quantization_bit = None  # 训练时量化位数: 4, 8 or None
         self.inference_quantization_bit = None  # 推理时量化位数: 4, 8 or None
@@ -154,6 +155,20 @@ def main():
     
     # 从命令行参数更新配置
     config.update_from_args(args)
+    
+    # 设置设备环境变量
+    if hasattr(config, "device") and config.device and config.device != "auto":
+        # 如果指定了具体设备（如 cuda:0），则设置 CUDA_VISIBLE_DEVICES
+        if config.device.startswith("cuda:"):
+            try:
+                device_id = config.device.split(":")[1]
+                os.environ["CUDA_VISIBLE_DEVICES"] = device_id
+                print(f"根据配置设置 CUDA_VISIBLE_DEVICES={device_id}")
+            except IndexError:
+                print(f"警告: 无法解析设备 ID: {config.device}")
+        elif config.device == "cpu":
+             os.environ["CUDA_VISIBLE_DEVICES"] = ""
+             print("根据配置设置使用 CPU")
     
     # 自动调整输出目录结构
     if config.model_name_or_path:

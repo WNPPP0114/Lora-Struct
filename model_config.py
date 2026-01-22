@@ -34,11 +34,11 @@ def load_model_with_lora(config):
         
         # 转换 dtype
         if config.dtype == "float16":
-            torch_dtype = "float16"
+            dtype_val = "float16"
         elif config.dtype == "bfloat16":
-            torch_dtype = "bfloat16"
+            dtype_val = "bfloat16"
         else:
-            torch_dtype = "float32"
+            dtype_val = "float32"
         
         # 检查是否有可用的 GPU
         import torch
@@ -106,7 +106,7 @@ def load_model_with_lora(config):
         # 加载模型参数
         load_kwargs = {
             "config": model_config,
-            "dtype": torch_dtype,
+            "dtype": dtype_val,
             "low_cpu_mem_usage": True,
         }
         
@@ -315,8 +315,17 @@ def load_lora_model(model_name_or_path, lora_model_path, config=None):
         
         if quantization_config:
             load_kwargs["quantization_config"] = quantization_config
-            load_kwargs["device_map"] = "auto"
-            print("使用 device_map='auto' 进行量化加载")
+            
+            # 确定 device_map 策略
+            # 在多卡环境下，device_map="auto" 可能会导致小模型推理崩溃
+            device_map = "auto"
+            if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+                if "CUDA_VISIBLE_DEVICES" not in os.environ:
+                    print(f"检测到 {torch.cuda.device_count()} 张显卡。为避免多卡推理崩溃，默认使用第一张显卡 (cuda:0)。")
+                    device_map = {"": "cuda:0"}
+            
+            load_kwargs["device_map"] = device_map
+            print(f"使用 device_map='{device_map}' 进行量化加载")
         
         if is_vlm:
             from transformers import AutoModelForImageTextToText

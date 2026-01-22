@@ -91,7 +91,24 @@ pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121
 pip install -r requirements.txt
 ```
 
-#### 2.3 验证安装
+#### 2.3 安装 Triton (Windows 用户必看)
+
+某些依赖库（如 bitsandbytes）在 Windows 系统上可能需要 triton 库。由于 PyPI 中没有适用于 Windows 的官方版本，直接使用 `pip install triton` 会报错。
+
+本项目已包含 triton 3.0.0 版本的 Windows 包，位于 `./triton/` 目录。请根据您的 Python 版本选择对应的包进行安装：
+
+```powershell
+# Python 3.10
+pip install ./triton/triton-3.0.0-cp310-cp310-win_amd64.whl
+
+# Python 3.11
+pip install ./triton/triton-3.0.0-cp311-cp311-win_amd64.whl
+
+# Python 3.12
+pip install ./triton/triton-3.0.0-cp312-cp312-win_amd64.whl
+```
+
+#### 2.4 验证安装
 
 ```powershell
 python -c "import torch; print('PyTorch 版本:', torch.__version__); print('CUDA 可用:', torch.cuda.is_available())"
@@ -263,6 +280,7 @@ data/vlm/
 # 模型相关参数
 model_name_or_path: "./Qwen3-1.7B"  # 模型路径
 model_type: "llm"  # 模型类型，llm（大语言模型）或 vlm（视觉语言模型）
+device: "cuda:0"  # 指定使用的设备，例如 "cuda:0", "cuda:1", "cpu" 或 "auto" (多卡自动分配)
 dtype: "float16"  # 数据类型，GPU 上使用 float16，CPU 上使用 float32
 train_quantization_bit: null  # 训练时量化位数：4, 8 或 null（如果不使用量化则为 null），用于减少训练时的显存使用
 inference_quantization_bit: null  # 推理时量化位数：4, 8 或 null（如果不使用量化则为 null），用于减少推理时的显存使用
@@ -307,6 +325,7 @@ target_modules: ["q_proj", "v_proj"]
 | **CPU 训练** | `dtype: "float32"`, `per_device_train_batch_size: 1` |
 | **小 GPU (8GB)** | `dtype: "float16"`, `per_device_train_batch_size: 2`, `gradient_accumulation_steps: 4` |
 | **大 GPU (16GB+)** | `dtype: "float16"`, `per_device_train_batch_size: 4`, `gradient_accumulation_steps: 2` |
+| **多卡服务器** | 建议指定单卡运行（如 `device: "cuda:0"`），避免小模型因自动切分导致崩溃 |
 
 ### 6. 开始训练
 
@@ -546,15 +565,6 @@ output/
      - 小型 VLM 模型（如 Qwen3-VL-2B-Instruct）：需要至少 16GB GPU 内存
      - 大型 VLM 模型（如 Qwen3-VL-4B-Instruct）：需要至少 24GB GPU 内存
 
-2. **Windows 系统安装 triton 指南**：
-   - 某些依赖库（如 bitsandbytes）在 Windows 系统上可能需要 triton 库
-   - 直接使用 `pip install triton` 会报错，因为 PyPI 中没有适用于 Windows 的版本
-   - **解决方法**：
-     - 项目已包含 triton 3.0.0 版本的 Windows 包，位于 `./triton/` 目录
-     - 根据您的 Python 版本选择对应的包进行安装：
-       - Python 3.10：`pip install ./triton/triton-3.0.0-cp310-cp310-win_amd64.whl`
-       - Python 3.11：`pip install ./triton/triton-3.0.0-cp311-cp311-win_amd64.whl`
-       - Python 3.12：`pip install ./triton/triton-3.0.0-cp312-cp312-win_amd64.whl`
 
 3. **数据格式**：
    - **LLM 数据格式**：
@@ -596,6 +606,11 @@ output/
 ### 4. Windows 下路径问题
 - 尽量使用正斜杠 `/` 或双反斜杠 `\\`。
 - 确保文件路径中没有特殊字符。
+
+### 5. 多卡环境下推理崩溃 (关键经验)
+如果在多 GPU 服务器上运行小模型（如 Qwen3-VL-2B）时，程序刚启动就崩溃（显存占用极低），通常是因为自动设备分配（`device_map="auto"`）在多卡间切分模型时出现了问题。
+- **解决方法**：强制使用单卡运行。
+- **操作**：在 `config.yaml` 中设置 `device: "cuda:0"`，或者在运行前设置环境变量 `CUDA_VISIBLE_DEVICES=0`。本项目已针对此问题进行了优化，默认在多卡环境下会优先尝试单卡加载。
 
 ## 📚 示例：LLM 和 VLM 微调
 
@@ -715,6 +730,11 @@ python main.py --task inference --max_new_tokens 500 --temperature 0.1 --top_p 0
 - **参数优化**：将 `torch_dtype` 参数更新为 `dtype`，以避免弃用警告，保持与 transformers 库的最新 API 兼容
 - **API 兼容性**：将 `Trainer` 类的 `tokenizer` 参数替换为 `processing_class`，以避免弃用警告，保持与 transformers 库的最新 API 兼容
 - **模型加载**：将 `AutoModelForVision2Seq` 类替换为 `AutoModelForImageTextToText`，以避免弃用警告，保持与 transformers 库的最新 API 兼容
+
+### 2026.1.22
+
+- **文档优化**：将 Triton 安装指南移动到“安装依赖”部分，提高文档可读性，防止用户遗漏关键配置步骤
+- **多卡推理优化**：修复了在多 GPU 服务器环境下，小模型（如 Qwen3-VL-2B）推理时因自动设备分配导致的崩溃问题。现在默认在多卡环境下强制使用单卡加载模型，除非用户明确指定
 
 ---
 

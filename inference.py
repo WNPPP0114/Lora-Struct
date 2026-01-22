@@ -62,12 +62,23 @@ def inference(config):
     if hasattr(config, 'use_original_model') and config.use_original_model:
         # 使用原始模型
         print(f"加载原始模型: {config.model_name_or_path}")
+        
+        # 确定 device_map 策略
+        # 在多卡环境下，device_map="auto" 可能会导致小模型（如 2B）推理崩溃
+        # 因此，如果没有明确指定，我们默认强制使用单卡
+        device_map = "auto"
+        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+            if "CUDA_VISIBLE_DEVICES" not in os.environ:
+                print(f"检测到 {torch.cuda.device_count()} 张显卡。为避免多卡推理崩溃，默认使用第一张显卡 (cuda:0)。")
+                print("提示: 如需指定特定显卡，请在 config.yaml 中设置 device 参数，例如: device: 'cuda:1'")
+                device_map = {"": "cuda:0"}
+        
         if is_vlm:
             from transformers import AutoModelForImageTextToText
-            model = AutoModelForImageTextToText.from_pretrained(config.model_name_or_path, torch_dtype="auto", device_map="auto")
+            model = AutoModelForImageTextToText.from_pretrained(config.model_name_or_path, dtype="auto", device_map=device_map)
         else:
             from transformers import AutoModelForCausalLM
-            model = AutoModelForCausalLM.from_pretrained(config.model_name_or_path, torch_dtype="auto", device_map="auto")
+            model = AutoModelForCausalLM.from_pretrained(config.model_name_or_path, dtype="auto", device_map=device_map)
         print("原始模型加载完成")
     else:
         # 使用带有 LoRA 权重的模型
