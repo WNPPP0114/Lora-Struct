@@ -14,28 +14,29 @@
 ## 📋 项目结构
 
 ```
-├── Qwen3-1.7B/           # 本地预训练模型目录
-├── Qwen3-4B/             # 本地预训练模型目录
-├── Qwen3-VL-2B-Instruct/ # 本地视觉语言模型目录
-├── Qwen3-VL-4B-Instruct/ # 本地视觉语言模型目录
-├── data/                 # 训练和验证数据
-│   ├── llm/              # LLM（大语言模型）数据
+├── Qwen3-1.7B/               # 本地预训练LLM模型目录
+├── Qwen3-4B/                 # 本地预训练LLM模型目录
+├── Qwen3-VL-2B-Instruct/     # 本地预训练VLM模型目录
+├── Qwen3-VL-4B-Instruct/     # 本地预训练VLM模型目录
+├── Qwen3-VL-4B-Instruct-FP8/ # 本地预训练VLM模型目录
+├── data/                     # 训练和验证数据
+│   ├── llm/                  # LLM（大语言模型）数据
 │   │   ├── train.json        # LLM 训练数据
 │   │   └── validation.json   # LLM 验证数据
-│   └── vlm/              # VLM（视觉语言模型）数据
+│   └── vlm/                  # VLM（视觉语言模型）数据
 │       ├── images/           # VLM 图片目录
 │       ├── prompt.json       # VLM 系统提示词
 │       └── label_map.json    # VLM 标签映射
-├── output/               # 输出目录（包含训练检查点和LoRA模型）
-├── config.yaml           # 配置文件
-├── main.py               # 主执行脚本
-├── data_processing.py    # 数据处理脚本
-├── model_config.py       # 模型配置脚本
-├── train.py              # 训练脚本
-├── evaluate.py           # 评估脚本
-├── inference.py          # 推理脚本
-├── requirements.txt      # 环境依赖包
-└── README.md             # 项目说明文档
+├── output/                   # 输出目录（包含训练检查点和LoRA模型）
+├── config.yaml               # 配置文件
+├── main.py                   # 主执行脚本
+├── data_processing.py        # 数据处理脚本
+├── model_config.py           # 模型配置脚本
+├── train.py                  # 训练脚本
+├── evaluate.py               # 评估脚本
+├── inference.py              # 推理脚本
+├── requirements.txt          # 环境依赖包
+└── README.md                 # 项目说明文档
 ```
 
 ## 🌟 核心特性
