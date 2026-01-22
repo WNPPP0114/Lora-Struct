@@ -6,7 +6,7 @@ eval_device: "auto"  # 评估时使用的设备，例如 "cuda:0", "cuda:1", "cp
 inference_device: "auto"  # 推理时使用的设备，例如 "cuda:0", "cuda:1", "cpu" 或 "auto" (默认使用单GPU以确保稳定性)
 dtype: "float16"  # 模型数据类型
 train_quantization_bit: 8  # 训练时量化位数: 4, 8 或 null (如果不使用量化则为 null)
-inference_quantization_bit: null  # 推理时量化位数: 4, 8 或 null (如果不使用量化则为 null)
+inference_quantization_bit: 8  # 推理时量化位数: 4, 8 或 null (如果不使用量化则为 null)
 
 # 数据相关参数
 dataset_name: null  # 数据集名称，null 表示使用本地数据
@@ -14,8 +14,8 @@ dataset_config_name: null  # 数据集配置名称
 data_dir: "./data"  # 本地数据目录
 
 # LLM 数据文件 (相对于 data_dir)
-train_file: "llm/train.json"
-validation_file: "llm/validation.json"
+train_file: "llm/train.json" # 训练数据文件 (仅 LLM)
+validation_file: "llm/validation.json" # 验证数据文件 (仅 LLM)
 
 # VLM 数据文件 (相对于 data_dir 或绝对路径)
 image_dir: "./data/vlm/images"  # 图片目录 (仅 VLM)

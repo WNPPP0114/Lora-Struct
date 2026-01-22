@@ -657,8 +657,26 @@ output/
 
 本项目已包含一个日常生活建议的示例数据集，您可以直接运行以下命令开始微调：
 
+#### 配置准备
+
+1. 编辑 `config.yaml`，设置 LLM 相关参数：
+
+```yaml
+# 模型相关参数
+model_name_or_path: "./Qwen3-1.7B"  # 本地语言模型路径
+model_type: "llm"  # 模型类型设置为 llm
+
+# LLM 数据文件 (相对于 data_dir 或绝对路径)
+train_file: "llm/train.json" # 训练数据文件 (仅 LLM)
+validation_file: "llm/validation.json" # 验证数据文件 (仅 LLM)
+```
+
+2. 准备好数据文件（参考 4.1 LLM 数据准备）
+
+#### 运行微调
+
 ```powershell
-# 使用 Qwen3-1.7B 模型微调
+# 使用 Qwen3-1.7B 模型微调日常生活建议模型
 python main.py --task train
 
 # 微调完成后进行推理
