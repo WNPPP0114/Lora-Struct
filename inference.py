@@ -58,20 +58,72 @@ def inference(config):
              tokenizer = AutoTokenizer.from_pretrained(config.model_name_or_path)
              processor = None
     
+    # 确定推理设备
+    inference_device = config.inference_device
+    print(f"推理使用设备: {inference_device}")
+    
+    # 设置 CUDA_VISIBLE_DEVICES（如果需要）
+    if inference_device and inference_device != "auto":
+        if inference_device.startswith("cuda:"):
+            try:
+                device_id = inference_device.split(":")[1]
+                os.environ["CUDA_VISIBLE_DEVICES"] = device_id
+                print(f"根据推理设备设置 CUDA_VISIBLE_DEVICES={device_id}")
+            except IndexError:
+                print(f"警告: 无法解析推理设备 ID: {inference_device}")
+        elif inference_device == "cpu":
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+            print("根据推理设备设置使用 CPU")
+    
     # 加载模型
     if hasattr(config, 'use_original_model') and config.use_original_model:
         # 使用原始模型
         print(f"加载原始模型: {config.model_name_or_path}")
         
         # 确定 device_map 策略
-        # 在多卡环境下，device_map="auto" 可能会导致小模型（如 2B）推理崩溃
-        # 因此，如果没有明确指定，我们默认强制使用单卡
-        device_map = "auto"
-        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-            if "CUDA_VISIBLE_DEVICES" not in os.environ:
-                print(f"检测到 {torch.cuda.device_count()} 张显卡。为避免多卡推理崩溃，默认使用第一张显卡 (cuda:0)。")
-                print("提示: 如需指定特定显卡，请在 config.yaml 中设置 device 参数，例如: device: 'cuda:1'")
-                device_map = {"": "cuda:0"}
+        # 智能设备映射选择，解决多GPU环境下的崩溃问题
+        device_map = None
+        
+        # 检查推理设备设置
+        if inference_device:
+            if inference_device == "auto":
+                # 自动模式：根据GPU数量和模型大小选择策略
+                if torch.cuda.is_available():
+                    num_gpus = torch.cuda.device_count()
+                    print(f"检测到 {num_gpus} 张 GPU")
+                    
+                    # 对于推理，为了稳定性，默认使用单设备
+                    if num_gpus > 1:
+                        print("多GPU环境下，推理默认使用单设备以避免崩溃")
+                        device_map = {"": "cuda:0"}
+                    else:
+                        device_map = {"": "cuda"}
+                else:
+                    print("未检测到 GPU，使用 CPU")
+                    device_map = {"": "cpu"}
+            elif inference_device.startswith("cuda:"):
+                # 指定了具体的 CUDA 设备
+                device_map = {"": inference_device}
+                print(f"使用指定设备: {inference_device}")
+            elif inference_device == "cuda":
+                # 使用默认 CUDA 设备
+                device_map = {"": "cuda"}
+                print("使用默认 CUDA 设备")
+            elif inference_device == "cpu":
+                # 使用 CPU
+                device_map = {"": "cpu"}
+                print("使用 CPU")
+        else:
+            # 没有指定设备，使用默认策略
+            if torch.cuda.is_available():
+                num_gpus = torch.cuda.device_count()
+                if num_gpus > 1:
+                    print(f"检测到 {num_gpus} 张显卡。为避免多卡推理崩溃，默认使用第一张显卡 (cuda:0)。")
+                    device_map = {"": "cuda:0"}
+                else:
+                    device_map = {"": "cuda"}
+            else:
+                device_map = {"": "cpu"}
         
         if is_vlm:
             from transformers import AutoModelForImageTextToText
@@ -86,13 +138,51 @@ def inference(config):
     
     model.eval()
     
-    # 将模型移到 GPU 设备（如果可用且未自动分配）
-    if not hasattr(model, "device_map") or not model.device_map:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # 确定模型设备
+    if hasattr(model, "device_map") and model.device_map:
+        # 模型使用了 device_map，尝试获取主设备
+        try:
+            # 对于使用 device_map 的模型，获取第一个设备
+            if isinstance(model.device_map, dict):
+                # 检查是否有明确的设备分配
+                for key, val in model.device_map.items():
+                    if isinstance(val, str) and val.startswith("cuda"):
+                        device = torch.device(val)
+                        break
+                else:
+                    # 没有找到 CUDA 设备，使用默认设备
+                    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            else:
+                # 对于其他类型的 device_map，使用默认设备
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        except:
+            # 出错时使用默认设备
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"模型已加载到设备: {device}")
+    else:
+        # 模型没有使用 device_map，手动移到合适的设备
+        if inference_device:
+            if inference_device == "auto":
+                # 自动模式：使用第一个 GPU 或 CPU
+                device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            elif inference_device.startswith("cuda:"):
+                # 指定了具体的 CUDA 设备
+                device = torch.device(inference_device)
+            elif inference_device == "cuda":
+                # 使用默认 CUDA 设备
+                device = torch.device("cuda")
+            elif inference_device == "cpu":
+                # 使用 CPU
+                device = torch.device("cpu")
+            else:
+                # 未知设备设置，使用默认设备
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            # 没有指定设备，使用默认设备
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
         model.to(device)
         print(f"模型已移到设备: {device}")
-    else:
-        device = model.device
     
     # 推理循环
     print("开始推理，输入 'exit' 退出")
@@ -122,7 +212,7 @@ def inference(config):
             text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             image_inputs = Image.open(image_path).convert("RGB")
             inputs = processor(text=[text], images=[image_inputs], padding=True, return_tensors="pt")
-            inputs = {k: v.to(model.device) for k, v in inputs.items()}
+            inputs = {k: v.to(device) for k, v in inputs.items()}
             
         else:
             input_text = input("输入文本: ")
@@ -133,7 +223,7 @@ def inference(config):
             messages = [{"role": "user", "content": input_text}]
             text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = tokenizer(text, return_tensors="pt")
-            inputs = {k: v.to(model.device) for k, v in inputs.items()}
+            inputs = {k: v.to(device) for k, v in inputs.items()}
         
         # 推理
         with torch.no_grad():

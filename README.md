@@ -46,11 +46,13 @@
 - **即插即用**：训练生成的 LoRA 模块可灵活拼装到原始模型
 - **多模型支持**：兼容 Qwen3、GPT2、DistilGPT2 等多种 LLM，以及 Qwen3-VL 等 VLM（视觉语言模型）
 - **内存友好**：支持 FP16 训练，大幅降低内存使用
-- **FP8 模型支持（待优化）**：支持 FP8 量化模型，进一步降低内存使用
+- **FP8 模型支持（优化中）**：支持 FP8 量化模型，进一步降低内存使用。当前优化方向包括：Windows 平台下的 Triton 依赖优化、训练稳定性提升、以及与量化参数的协同优化
 - **量化增强**：内置支持 8-bit 和 4-bit 量化加载，适用于显存受限的场景。**训练和推理时**可分开控制，可显著减少显存使用，使预训练大模型能够在较小显存的硬件上运行。
   - **训练时**：通过 `config.yaml` 中的 `train_quantization_bit` 参数控制，**预训练模型**的权重以量化精度加载，减少训练时的显存占用，但 LoRA 适配器仍以全精度（float16）训练，平衡了内存使用和训练质量。
   - **推理时**：通过 `config.yaml` 中的 `inference_quantization_bit` 参数控制，**预训练模型**的权重以量化精度加载，可根据部署环境独立调整量化配置，无需与训练时保持一致。
   - **精度区分**：量化位数越低（如 4-bit），内存使用越少，但可能对模型性能有轻微影响；位数越高（如 8-bit），内存使用稍高，但模型性能更接近原始精度。
+- **分布式训练支持**：内置支持多 GPU 分布式训练，充分利用多 GPU 资源提高训练速度，同时避免多卡环境下的崩溃问题
+- **多卡稳定性优化**：针对评估和推理场景，默认使用单设备以确保稳定性，避免多卡切分导致的崩溃
 - **完整流程**：从数据准备到模型训练、评估和推理的全流程支持
 - **易于扩展**：模块化设计，便于添加新功能和支持新模型
 
@@ -282,7 +284,9 @@ data/vlm/
 # 模型相关参数
 model_name_or_path: "./Qwen3-1.7B"  # 模型路径
 model_type: "llm"  # 模型类型，llm（大语言模型）或 vlm（视觉语言模型）
-device: "cuda:0"  # 指定使用的设备，例如 "cuda:0", "cuda:1", "cpu" 或 "auto" (多卡自动分配)
+train_device: "auto"  # 训练时使用的设备，例如 "cuda:0", "cuda:1", "cpu" 或 "auto" (多卡自动分配)
+eval_device: "auto"  # 评估时使用的设备，例如 "cuda:0", "cuda:1", "cpu" 或 "auto" (默认使用单GPU)
+inference_device: "auto"  # 推理时使用的设备，例如 "cuda:0", "cuda:1", "cpu" 或 "auto" (默认使用单GPU以确保稳定性)
 dtype: "float16"  # 数据类型，GPU 上使用 float16，CPU 上使用 float32
 train_quantization_bit: null  # 训练时量化位数：4, 8 或 null（如果不使用量化则为 null），用于减少训练时的显存使用
 inference_quantization_bit: null  # 推理时量化位数：4, 8 或 null（如果不使用量化则为 null），用于减少推理时的显存使用
@@ -322,12 +326,41 @@ target_modules: ["q_proj", "v_proj"]
 
 #### 5.2 根据硬件调整
 
-| 硬件类型 | 推荐配置 |
-|---------|---------|
-| **CPU 训练** | `dtype: "float32"`, `per_device_train_batch_size: 1` |
-| **小 GPU (8GB)** | `dtype: "float16"`, `per_device_train_batch_size: 2`, `gradient_accumulation_steps: 4` |
-| **大 GPU (16GB+)** | `dtype: "float16"`, `per_device_train_batch_size: 4`, `gradient_accumulation_steps: 2` |
-| **多卡服务器** | 建议指定单卡运行（如 `device: "cuda:0"`），避免模型因自动切分导致崩溃 |
+| 硬件类型 | 推荐配置 | 适用模型 | 内存使用估算 |
+|---------|---------|---------|------------|
+| **CPU 训练** | `dtype: "float32"`, `per_device_train_batch_size: 1` | 小型模型（如 distilgpt2） | 内存使用取决于模型大小，通常需要 8GB+ 系统内存 |
+| **小 GPU (8GB)** | `dtype: "float16"`, `per_device_train_batch_size: 2`, `gradient_accumulation_steps: 4` | 小型 LLM（如 Qwen3-1.7B） | 约 6-7GB GPU 内存 |
+| **中 GPU (12GB)** | `dtype: "float16"`, `per_device_train_batch_size: 3`, `gradient_accumulation_steps: 2` | 中型 LLM（如 Qwen3-4B） | 约 10-11GB GPU 内存 |
+| **大 GPU (16GB+)** | `dtype: "float16"`, `per_device_train_batch_size: 4`, `gradient_accumulation_steps: 2` | 大型 LLM 或小型 VLM（如 Qwen3-VL-2B-Instruct） | 约 14-15GB GPU 内存 |
+| **超大 GPU (24GB+)** | `dtype: "float16"`, `per_device_train_batch_size: 6`, `gradient_accumulation_steps: 1` | 大型 VLM（如 Qwen3-VL-4B-Instruct） | 约 20-22GB GPU 内存 |
+| **多卡服务器** | 推荐设置 `train_device: "auto"`，系统会自动启用分布式训练，充分利用多 GPU 资源 | 所有模型 | 总内存 = 单卡内存 × GPU 数量 |
+
+**硬件配置实用建议：**
+- **内存估算公式**：对于 LLM，内存使用 ≈ 模型参数 × 2（float16）× 1.5（优化器状态和中间激活值）
+- **训练时间预估**：同等配置下，多卡训练时间 ≈ 单卡训练时间 / GPU 数量 × 1.1（通信开销）
+- **多卡配置技巧**：
+  - 确保所有 GPU 型号相同，以获得最佳性能
+  - 对于不同型号的 GPU，系统会自动使用性能最差的 GPU 作为基准
+  - 多卡训练时，建议使用 NVLink 或高速网络连接以减少通信开销
+- **显存不足解决方案**：
+  1. 降低 `per_device_train_batch_size`
+  2. 增加 `gradient_accumulation_steps`
+  3. 使用 `train_quantization_bit` 进行量化
+  4. 选择更小的预训练模型
+
+### 5.3 多卡环境下的设备管理
+本项目已针对多 GPU 环境进行了全面优化，确保在各种硬件配置下都能稳定运行。
+
+- **训练时**：设置 `train_device: "auto"` 时，系统会自动启用分布式训练，充分利用多 GPU 资源
+  - **分布式训练实现**：使用 `torch.multiprocessing.spawn` 为每个 GPU 启动独立训练进程
+  - **后端自动切换**：默认尝试使用 NCCL 后端（性能最佳），如果不可用自动切换到 GLOO 后端
+  - **错误处理**：完善的异常捕获和分布式环境清理机制，确保训练过程中的错误不会导致系统崩溃
+  - **进程同步**：使用 `dist.barrier()` 确保多进程间的同步操作，避免竞态条件
+- **评估时**：设置 `eval_device: "auto"` 时，系统默认使用单设备以提高稳定性
+- **推理时**：设置 `inference_device: "auto"` 时，系统默认使用单设备以提高稳定性，避免多卡切分导致的崩溃
+  - **智能设备映射**：多 GPU 环境下默认使用第一张 GPU (cuda:0) 进行推理，确保稳定性
+  - **设备管理**：通过 `device_map` 策略明确控制模型加载到特定设备，避免自动切分导致的问题
+- **手动指定**：如果需要使用特定 GPU，可以在 `config.yaml` 中分别设置 `train_device: "cuda:0"`、`eval_device: "cuda:1"`、`inference_device: "cuda:2"`（或其他设备编号）
 
 ### 6. 开始训练
 
@@ -359,6 +392,7 @@ python main.py --task evaluate
 | **准确回答** | 需要准确信息的问题，如事实性问题、技术细节等 | `python main.py --task inference --max_new_tokens 2000 --temperature 0.1 --top_p 0.8` |
 | **平衡设置** | 大多数日常问题，兼顾准确性和自然表达 | `python main.py --task inference --max_new_tokens 2000 --temperature 0.7 --top_p 0.95` |
 | **比较模型** | 比较原始模型和微调模型的表现差异 | 使用微调模型：`python main.py --task inference`<br>使用原始模型：`python main.py --task inference --use_original_model` |
+| **8bit量化推理** | 显存受限的环境，需要减少内存使用 | `python main.py --task inference --inference_quantization_bit 8` |
 
 ## 🎯 LoRA 工作流程详解
 
@@ -446,6 +480,9 @@ python main.py --task evaluate
 | `--temperature` | 推理时的温度参数，控制生成文本的随机性，覆盖配置文件中的设置 | (从 config 读取) |
 | `--top_p` | 推理时的 top-p 参数，控制生成文本的多样性，覆盖配置文件中的设置 | (从 config 读取) |
 | `--repetition_penalty` | 推理时的重复惩罚参数，控制生成文本的重复程度，覆盖配置文件中的设置 | (从 config 读取) |
+| `--train_device` | 训练时使用的设备，例如 "cuda:0", "cuda:1", "cpu" 或 "auto" | (从 config 读取) |
+| `--eval_device` | 评估时使用的设备，例如 "cuda:0", "cuda:1", "cpu" 或 "auto" | (从 config 读取) |
+| `--inference_device` | 推理时使用的设备，例如 "cuda:0", "cuda:1", "cpu" 或 "auto" | (从 config 读取) |
 
 ## 📁 输出目录说明
 
@@ -500,7 +537,7 @@ output/
      - **推理时优化**：**预训练模型**的权重和 LoRA 适配器均以量化精度加载，进一步减少内存使用，适合部署到资源受限的环境
 
 3. **FP8 模型的特殊性**：
-   - 加载时会使用 FP8 权重，但计算仍会使用 `torch_dtype` 指定的精度
+   - 加载时会使用 FP8 权重，但计算仍会使用 `dtype` 指定的精度
    - 可以在此基础上进一步使用 `train_quantization_bit` 或 `inference_quantization_bit` 进行量化，获得更低的内存使用
 
 ### 内存优化建议
@@ -567,8 +604,7 @@ output/
      - 小型 VLM 模型（如 Qwen3-VL-2B-Instruct）：需要至少 16GB GPU 内存
      - 大型 VLM 模型（如 Qwen3-VL-4B-Instruct）：需要至少 24GB GPU 内存
 
-
-3. **数据格式**：
+2. **数据格式**：
    - **LLM 数据格式**：
      - 数据文件应为 JSON 格式
      - 每行包含 `text`（输入文本）和 `target`（目标输出）字段
@@ -593,7 +629,7 @@ output/
 如果遇到显存不足错误：
 - 减小 `per_device_train_batch_size`（例如从 4 减到 2 或 1）。
 - 增加 `gradient_accumulation_steps` 以保持总批次大小不变。
-- 确保 `torch_dtype` 设置为 `float16`。
+- 确保 `dtype` 设置为 `float16`。
 - 减小 `max_length`（对于 VLM，图片 token 占用较多，可能需要适当减小文本长度）。
 
 ### 2. 训练损失不下降
@@ -609,10 +645,7 @@ output/
 - 尽量使用正斜杠 `/` 或双反斜杠 `\\`。
 - 确保文件路径中没有特殊字符。
 
-### 5. 多卡环境下推理崩溃 (关键经验)
-如果在多 GPU 服务器上运行模型时，程序刚启动就崩溃（显存占用极低），通常是因为自动设备分配（`device_map="auto"`）在多卡间切分模型时出现了问题。
-- **解决方法**：强制使用单卡运行。
-- **操作**：在 `config.yaml` 中设置 `device: "cuda:0"`，或者在运行前设置环境变量 `CUDA_VISIBLE_DEVICES=0`。本项目已针对此问题进行了优化，默认在多卡环境下会优先尝试单卡加载。
+
 
 ## 📚 示例：LLM 和 VLM 微调
 
@@ -629,7 +662,7 @@ output/
 python main.py --task train
 
 # 微调完成后进行推理
-python main.py --task inferencel
+python main.py --task inference
 
 # 使用原始模型进行推理（不加载 LoRA 权重）
 python main.py --task inference --use_original_model
@@ -737,6 +770,17 @@ python main.py --task inference --max_new_tokens 500 --temperature 0.1 --top_p 0
 
 - **文档优化**：将 Triton 安装指南移动到“安装依赖”部分，提高文档可读性，防止用户遗漏关键配置步骤
 - **多卡推理优化**：修复了在多 GPU 服务器环境下，模型推理时因自动设备分配导致的崩溃问题。现在默认在多卡环境下强制使用单卡加载模型，除非用户明确指定
+- **分布式训练支持**：引入了 torch.distributed 和 torch.multiprocessing 技术，支持多 GPU 分布式训练，充分利用多 GPU 资源提高训练速度
+- **后端自动切换**：分布式训练时，首先尝试使用 NCCL 后端（性能最佳），如果 NCCL 不可用，自动切换到 GLOO 后端，确保在不同环境下都能正常运行
+- **错误处理增强**：完善了分布式训练的错误处理机制，确保在任何情况下都能正确处理异常，避免二次错误
+- **设备检测优化**：改进了设备检测逻辑，确保能正确识别和使用可用设备，提高系统兼容性
+- **设备控制优化**：移除了统一的 `device` 参数，引入了 `train_device`、`eval_device` 和 `inference_device` 三个独立参数，分别控制训练、评估和推理使用的设备
+  - **训练**：`train_device: "auto"` (多卡自动分配)，自动启用分布式训练
+  - **评估**：`eval_device: "auto"` (默认使用单GPU)
+  - **推理**：`inference_device: "auto"` (默认使用单GPU以确保稳定性)
+- **命令行参数增强**：添加了 `--train_device`、`--eval_device` 和 `--inference_device` 命令行参数，支持在命令行中指定不同任务的设备
+- **配置文件更新**：在 `config.yaml` 中更新了设备相关配置，添加了新的设备参数并更新了相关注释
+- **TF32 精度优化**：修复了 PyTorch 2.9+ 版本中 TF32 控制 API 过时的警告，使用新的 fp32_precision API 替代旧的 allow_tf32 API，确保代码在新版本 PyTorch 上无警告运行
 
 ---
 

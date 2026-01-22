@@ -313,34 +313,146 @@ def load_lora_model(model_name_or_path, lora_model_path, config=None):
             "low_cpu_mem_usage": True,
         }
         
+        # 确定 device_map 策略
+        # 智能设备映射选择，解决多GPU环境下的崩溃问题
+        device_map = None
+        
+        # 检查是否在分布式训练环境中
+        is_distributed = False
+        if torch.cuda.is_available():
+            # 检查是否存在分布式训练的环境变量
+            if os.environ.get('RANK') is not None or os.environ.get('LOCAL_RANK') is not None:
+                is_distributed = True
+                print("检测到分布式训练环境")
+            else:
+                num_gpus = torch.cuda.device_count()
+                print(f"检测到 {num_gpus} 张 GPU")
+                
+                # 打印GPU内存信息
+                for i in range(num_gpus):
+                    gpu_mem_total = torch.cuda.get_device_properties(i).total_memory / 1024**3
+                    # 兼容不同版本的PyTorch
+                    try:
+                        # 尝试使用较新的API
+                        if hasattr(torch.cuda, 'memory_free'):
+                            gpu_mem_free = torch.cuda.memory_free(i) / 1024**3
+                        elif hasattr(torch.cuda, 'mem_get_info'):
+                            gpu_mem_free = torch.cuda.mem_get_info(i)[0] / 1024**3
+                        else:
+                            # 如果都不可用，使用近似值
+                            gpu_mem_free = gpu_mem_total * 0.8  # 假设80%可用
+                        print(f"GPU {i}: {gpu_mem_free:.2f}GB / {gpu_mem_total:.2f}GB 可用")
+                    except Exception as e:
+                        # 如果获取内存信息失败，只打印总内存
+                        print(f"GPU {i}: 总内存 {gpu_mem_total:.2f}GB")
+                
+                # 优先检查是否有环境变量指定设备
+                if "CUDA_VISIBLE_DEVICES" in os.environ:
+                    visible_devices = os.environ["CUDA_VISIBLE_DEVICES"]
+                    print(f"CUDA_VISIBLE_DEVICES: {visible_devices}")
+                    # 当指定了可见设备时，使用第一张可见设备
+                    device_map = {"": "cuda:0"}
+                    print("策略选择: 环境变量指定了可见设备，使用第一张可见设备")
+                else:
+                    # 根据GPU数量和模型大小选择策略
+                    if num_gpus == 1:
+                        # 单GPU环境，直接使用cuda
+                        device_map = {"": "cuda"}
+                        print("策略选择: 单GPU环境，使用默认CUDA设备")
+                    else:
+                        # 多GPU环境，使用更安全的策略
+                        # 对于小模型，使用单设备以避免崩溃
+                        # 对于大模型，尝试使用auto策略
+                        try:
+                            # 尝试获取模型大小信息
+                            from transformers import AutoConfig
+                            model_config = AutoConfig.from_pretrained(model_name_or_path)
+                            # 简单判断模型大小（基于层数）
+                            num_layers = getattr(model_config, "num_hidden_layers", 0)
+                            print(f"模型层数: {num_layers}")
+                            
+                            if num_layers < 24:  # 小模型
+                                print("策略选择: 检测到小模型，使用单设备策略避免崩溃")
+                                device_map = {"": "cuda:0"}
+                            else:  # 大模型
+                                print("策略选择: 检测到大模型，尝试使用 auto 设备映射策略")
+                                device_map = "auto"
+                        except Exception as e:
+                            print(f"获取模型信息时出错: {e}，默认使用单设备策略")
+                            device_map = {"": "cuda:0"}
+        else:
+            print("未检测到 GPU，使用 CPU")
+            device_map = {"": "cpu"}
+        
+        # 在分布式训练环境中，不设置 device_map，让分布式训练框架处理设备分配
+        if not is_distributed and device_map:
+            load_kwargs["device_map"] = device_map
+            print(f"最终选择: 使用 device_map='{device_map}' 进行加载")
+        else:
+            print("最终选择: 不设置 device_map，由训练框架处理设备分配")
+        
         if quantization_config:
             load_kwargs["quantization_config"] = quantization_config
-            
-            # 确定 device_map 策略
-            # 在多卡环境下，device_map="auto" 可能会导致小模型推理崩溃
-            device_map = "auto"
-            if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-                if "CUDA_VISIBLE_DEVICES" not in os.environ:
-                    print(f"检测到 {torch.cuda.device_count()} 张显卡。为避免多卡推理崩溃，默认使用第一张显卡 (cuda:0)。")
-                    device_map = {"": "cuda:0"}
-            
-            load_kwargs["device_map"] = device_map
-            print(f"使用 device_map='{device_map}' 进行量化加载")
+            print(f"启用 {quantization_bit}-bit 量化加载")
         
-        if is_vlm:
-            from transformers import AutoModelForImageTextToText
-            model = AutoModelForImageTextToText.from_pretrained(model_name_or_path, **load_kwargs)
-        else:
-            model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **load_kwargs)
+        # 模型加载带自动回退机制
+        try:
+            if is_vlm:
+                from transformers import AutoModelForImageTextToText
+                model = AutoModelForImageTextToText.from_pretrained(model_name_or_path, **load_kwargs)
+            else:
+                model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **load_kwargs)
             
-        print("基础模型加载完成")
-        
-        # 加载 LoRA 权重
-        print(f"加载 LoRA 权重: {lora_model_path}")
-        model = PeftModel.from_pretrained(model, lora_model_path)
-        print("LoRA 权重加载完成")
-        
-        return model
+            print("基础模型加载完成")
+            
+            # 加载 LoRA 权重
+            print(f"加载 LoRA 权重: {lora_model_path}")
+            model = PeftModel.from_pretrained(model, lora_model_path)
+            print("LoRA 权重加载完成")
+            
+            return model
+        except Exception as e:
+            print(f"模型加载失败: {e}")
+            print("尝试使用单设备策略回退...")
+            # 回退到单设备策略
+            load_kwargs["device_map"] = {"": "cuda:0"}
+            print("已切换到单设备策略: {\"\": \"cuda:0\"}")
+            
+            try:
+                if is_vlm:
+                    from transformers import AutoModelForImageTextToText
+                    model = AutoModelForImageTextToText.from_pretrained(model_name_or_path, **load_kwargs)
+                else:
+                    model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **load_kwargs)
+                
+                print("基础模型加载完成（回退策略）")
+                
+                # 加载 LoRA 权重
+                print(f"加载 LoRA 权重: {lora_model_path}")
+                model = PeftModel.from_pretrained(model, lora_model_path)
+                print("LoRA 权重加载完成（回退策略）")
+                
+                return model
+            except Exception as fallback_error:
+                print(f"回退策略也失败: {fallback_error}")
+                print("尝试使用 CPU 加载...")
+                # 最终回退到 CPU
+                load_kwargs["device_map"] = {"": "cpu"}
+                
+                if is_vlm:
+                    from transformers import AutoModelForImageTextToText
+                    model = AutoModelForImageTextToText.from_pretrained(model_name_or_path, **load_kwargs)
+                else:
+                    model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **load_kwargs)
+                
+                print("基础模型加载完成（CPU 回退）")
+                
+                # 加载 LoRA 权重
+                print(f"加载 LoRA 权重: {lora_model_path}")
+                model = PeftModel.from_pretrained(model, lora_model_path)
+                print("LoRA 权重加载完成（CPU 回退）")
+                
+                return model
     except Exception as e:
         print(f"加载 LoRA 模型时发生错误: {e}")
         print("详细错误信息:")

@@ -28,10 +28,15 @@ class Config:
         """
         # 模型相关参数
         self.model_name_or_path = "facebook/opt-125m"
-        self.device = "auto"  # 默认自动分配
+        self.train_device = "auto"  # 训练时使用的设备，例如 "cuda:0", "cuda:1", "cpu" 或 "auto"
+        self.eval_device = "auto"  # 评估时使用的设备，例如 "cuda:0", "cuda:1", "cpu" 或 "auto"
+        self.inference_device = "auto"  # 推理时使用的设备，例如 "cuda:0", "cuda:1", "cpu" 或 "auto"
         self.dtype = "float16"
         self.train_quantization_bit = None  # 训练时量化位数: 4, 8 or None
         self.inference_quantization_bit = None  # 推理时量化位数: 4, 8 or None
+        
+        # 分布式训练相关参数
+        self.distributed_training = False  # 是否启用分布式训练
         
         # 数据相关参数
         self.dataset_name = None
@@ -141,6 +146,12 @@ def parse_args():
     parser.add_argument("--temperature", type=float, help="推理时的温度参数")
     parser.add_argument("--top_p", type=float, help="推理时的 top-p 参数")
     parser.add_argument("--repetition_penalty", type=float, help="推理时的重复惩罚参数")
+    parser.add_argument("--distributed_training", action="store_true", help="启用分布式训练")
+    parser.add_argument("--train_device", type=str, help="训练时使用的设备，例如 'cuda:0', 'cuda:1', 'cpu' 或 'auto'")
+    parser.add_argument("--eval_device", type=str, help="评估时使用的设备，例如 'cuda:0', 'cuda:1', 'cpu' 或 'auto'")
+    parser.add_argument("--inference_device", type=str, help="推理时使用的设备，例如 'cuda:0', 'cuda:1', 'cpu' 或 'auto'")
+    parser.add_argument("--train_quantization_bit", type=int, help="训练时量化位数，例如 4 或 8")
+    parser.add_argument("--inference_quantization_bit", type=int, help="推理时量化位数，例如 4 或 8")
     return parser.parse_args()
 
 def main():
@@ -156,19 +167,42 @@ def main():
     # 从命令行参数更新配置
     config.update_from_args(args)
     
+    # 根据任务类型确定使用的设备参数
+    task_device = None
+    if args.task == "train":
+        task_device = config.train_device
+        print(f"训练使用设备: {task_device}")
+    elif args.task == "evaluate":
+        task_device = config.eval_device
+        print(f"评估使用设备: {task_device}")
+    elif args.task == "inference":
+        task_device = config.inference_device
+        print(f"推理使用设备: {task_device}")
+    
     # 设置设备环境变量
-    if hasattr(config, "device") and config.device and config.device != "auto":
+    if task_device and task_device != "auto":
         # 如果指定了具体设备（如 cuda:0），则设置 CUDA_VISIBLE_DEVICES
-        if config.device.startswith("cuda:"):
+        if task_device.startswith("cuda:"):
             try:
-                device_id = config.device.split(":")[1]
+                device_id = task_device.split(":")[1]
                 os.environ["CUDA_VISIBLE_DEVICES"] = device_id
                 print(f"根据配置设置 CUDA_VISIBLE_DEVICES={device_id}")
             except IndexError:
-                print(f"警告: 无法解析设备 ID: {config.device}")
-        elif config.device == "cpu":
+                print(f"警告: 无法解析设备 ID: {task_device}")
+        elif task_device == "cpu":
              os.environ["CUDA_VISIBLE_DEVICES"] = ""
              print("根据配置设置使用 CPU")
+    
+    # 检查训练设备设置，当设置为 "auto" 时自动启用分布式训练
+    if args.task == "train" and task_device == "auto":
+        import torch
+        num_gpus = torch.cuda.device_count()
+        if num_gpus > 1:
+            print(f"检测到 {num_gpus} 张 GPU，train_device 设置为 'auto'，自动启用分布式训练")
+            config.distributed_training = True
+        else:
+            print(f"检测到 {num_gpus} 张 GPU，train_device 设置为 'auto'，使用单进程训练")
+            config.distributed_training = False
     
     # 自动调整输出目录结构
     if config.model_name_or_path:
@@ -188,6 +222,7 @@ def main():
             
     print(f"最终输出目录: {config.output_dir}")
     print(f"最终 LoRA 模型路径: {config.lora_model_path}")
+    print(f"分布式训练: {'启用' if hasattr(config, 'distributed_training') and config.distributed_training else '禁用'}")
     
     # 执行任务
     if args.task == "train":

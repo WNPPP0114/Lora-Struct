@@ -16,47 +16,60 @@ def load_and_process_data(config):
         tokenizer_or_processor: 分词器或处理器
     """
     try:
+        # 检查是否在分布式训练环境中
+        is_distributed = False
+        if os.environ.get('RANK') is not None:
+            is_distributed = True
+            rank = int(os.environ['RANK'])
+        else:
+            rank = 0
+        
+        # 只在主进程打印详细日志
+        def print_dist(msg):
+            if rank == 0:
+                print(msg)
+        
         # 检查是否是 VLM
         if getattr(config, "model_type", "llm") == "vlm":
             return load_and_process_vlm_data(config)
 
         # 加载分词器
-        print(f"加载分词器: {config.model_name_or_path}")
+        print_dist(f"加载分词器: {config.model_name_or_path}")
         tokenizer = AutoTokenizer.from_pretrained(config.model_name_or_path)
         # 设置 pad_token（如果没有）
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
-            print(f"设置 pad_token 为 eos_token: {tokenizer.eos_token}")
-        print("分词器加载完成")
+            print_dist(f"设置 pad_token 为 eos_token: {tokenizer.eos_token}")
+        print_dist("分词器加载完成")
         
         # 根据配置加载数据集
         if config.dataset_name:
             # 从 Hugging Face Hub 加载数据集
-            print(f"从 Hugging Face Hub 加载数据集: {config.dataset_name}")
+            print_dist(f"从 Hugging Face Hub 加载数据集: {config.dataset_name}")
             dataset = load_dataset(config.dataset_name, config.dataset_config_name)
         else:
             # 从本地文件加载数据集
-            print(f"从本地文件加载数据集: {config.data_dir}")
+            print_dist(f"从本地文件加载数据集: {config.data_dir}")
             dataset = load_local_dataset(config)
         
-        print(f"数据集加载完成，包含以下 split: {list(dataset.keys())}")
+        print_dist(f"数据集加载完成，包含以下 split: {list(dataset.keys())}")
         
         # 处理数据集
-        print("处理数据集...")
+        print_dist("处理数据集...")
         processed_dataset = dataset.map(
             lambda examples: process_function(examples, tokenizer, config),
             batched=True,
             remove_columns=dataset["train"].column_names
         )
-        print("数据集处理完成")
+        print_dist("数据集处理完成")
         
         # 设置数据集格式
-        print("设置数据集格式...")
+        print_dist("设置数据集格式...")
         processed_dataset.set_format(
             type="torch",
             columns=["input_ids", "attention_mask", "labels"]
         )
-        print("数据集格式设置完成")
+        print_dist("数据集格式设置完成")
         
         return processed_dataset, tokenizer
     except Exception as e:
@@ -106,9 +119,22 @@ def load_and_process_vlm_data(config):
     加载和处理 VLM 数据
     """
     try:
-        print(f"加载 Processor: {config.model_name_or_path}")
+        # 检查是否在分布式训练环境中
+        is_distributed = False
+        if os.environ.get('RANK') is not None:
+            is_distributed = True
+            rank = int(os.environ['RANK'])
+        else:
+            rank = 0
+        
+        # 只在主进程打印详细日志
+        def print_dist(msg):
+            if rank == 0:
+                print(msg)
+        
+        print_dist(f"加载 Processor: {config.model_name_or_path}")
         processor = AutoProcessor.from_pretrained(config.model_name_or_path)
-        print("Processor 加载完成")
+        print_dist("Processor 加载完成")
 
         # 加载 Prompt
         if not os.path.exists(config.prompt_file):
@@ -142,7 +168,7 @@ def load_and_process_vlm_data(config):
             raise ValueError(f"图片目录不存在: {config.image_dir}")
             
         image_files = [f for f in os.listdir(config.image_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-        print(f"找到 {len(image_files)} 张图片")
+        print_dist(f"找到 {len(image_files)} 张图片")
         
         if not image_files:
             raise ValueError(f"在 {config.image_dir} 中没有找到任何图片")
@@ -207,14 +233,14 @@ def load_and_process_vlm_data(config):
             
         dataset = DatasetDict(dataset_dict)
         
-        print("处理 VLM 数据集...")
+        print_dist("处理 VLM 数据集...")
         # 注意：这里 batched=False，因为我们需要逐个加载图片
         processed_dataset = dataset.map(
             lambda example: process_vlm_function(example, processor, config),
             batched=False,
             remove_columns=dataset["train"].column_names
         )
-        print("数据集处理完成")
+        print_dist("数据集处理完成")
         
         # 设置格式
         # 动态获取列名，因为不同 VLM 的 processor 输出可能不同

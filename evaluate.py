@@ -9,11 +9,30 @@ def evaluate(config):
     Args:
         config: 配置对象，包含评估相关参数
     """
+    # 确定评估设备
+    eval_device = config.eval_device
+    print(f"评估使用设备: {eval_device}")
+    
+    # 设置 CUDA_VISIBLE_DEVICES（如果需要）
+    if eval_device and eval_device != "auto":
+        if eval_device.startswith("cuda:"):
+            try:
+                device_id = eval_device.split(":")[1]
+                import os
+                os.environ["CUDA_VISIBLE_DEVICES"] = device_id
+                print(f"根据评估设备设置 CUDA_VISIBLE_DEVICES={device_id}")
+            except IndexError:
+                print(f"警告: 无法解析评估设备 ID: {eval_device}")
+        elif eval_device == "cpu":
+            import os
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+            print("根据评估设备设置使用 CPU")
+    
     # 加载和处理数据
     dataset, tokenizer = load_and_process_data(config)
     
     # 加载模型
-    model = load_lora_model(config.model_name_or_path, config.lora_model_path)
+    model = load_lora_model(config.model_name_or_path, config.lora_model_path, config)
     
     # 配置评估参数
     training_args = TrainingArguments(
