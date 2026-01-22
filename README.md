@@ -420,7 +420,6 @@ python main.py --task evaluate
 | `--learning_rate` | 学习率，覆盖配置文件中的设置 | (从 config 读取) |
 | `--lora_r` | LoRA 秩，覆盖配置文件中的设置 | (从 config 读取) |
 | `--lora_alpha` | LoRA alpha 参数，覆盖配置文件中的设置 | (从 config 读取) |
-| `--lora_model_path` | LoRA 模型路径，用于推理，覆盖配置文件中的设置 | (从 config 读取) |
 | `--use_original_model` | 使用原始模型进行推理，不加载 LoRA 权重 | `False` |
 | `--max_new_tokens` | 推理时生成的最大 token 数，覆盖配置文件中的设置 | (从 config 读取) |
 | `--temperature` | 推理时的温度参数，控制生成文本的随机性，覆盖配置文件中的设置 | (从 config 读取) |
@@ -613,10 +612,10 @@ output/
 python main.py --task train
 
 # 微调完成后进行推理
-python main.py --task inference --lora_model_path ./output/lora_model --max_new_tokens 1000 --temperature 0.7 --top_p 0.95
+python main.py --task inferencel
 
 # 使用原始模型进行推理（不加载 LoRA 权重）
-python main.py --task inference --use_original_model --max_new_tokens 1000 --temperature 0.7 --top_p 0.95
+python main.py --task inference --use_original_model
 ```
 
 #### LLM 输入示例：
@@ -657,7 +656,7 @@ label_map_file: "./data/vlm/label_map.json"  # 标签映射文件 (仅 VLM)
 python main.py --task train
 
 # 微调完成后进行推理
-python main.py --task inference --lora_model_path ./output/lora_model --max_new_tokens 500 --temperature 0.1 --top_p 0.8
+python main.py --task inference --max_new_tokens 500 --temperature 0.1 --top_p 0.8
 ```
 
 #### VLM 输入示例：
