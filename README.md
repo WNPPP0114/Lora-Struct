@@ -28,6 +28,7 @@
 │       ├── prompt.json       # VLM 系统提示词
 │       └── label_map.json    # VLM 标签映射
 ├── output/                   # 输出目录（包含训练检查点和LoRA模型）
+├── triton/                   # triton whl文件目录
 ├── config.yaml               # 配置文件
 ├── main.py                   # 主执行脚本
 ├── data_processing.py        # 数据处理脚本
