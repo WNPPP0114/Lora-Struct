@@ -6,6 +6,7 @@ import torch.multiprocessing as mp
 from transformers import Trainer, TrainingArguments, set_seed
 from data_processing import load_and_process_data, get_data_collator
 from model_config import load_model_with_lora, save_lora_model
+from evaluate import run_evaluation
 
 def setup_distributed(rank, world_size):
     """
@@ -208,22 +209,9 @@ def train_distributed(rank, world_size, config):
         if world_size > 1:
             dist.barrier()
         
-        # 评估模型
+        # 评估模型（使用统一的评估逻辑）
         if dataset.get("validation", None) and rank == 0:
-            print("开始评估...")
-            eval_result = trainer.evaluate()
-            
-            # 打印评估结果
-            print("评估结果:")
-            for key, value in eval_result.items():
-                print(f"{key}: {value}")
-            
-            # 保存评估结果
-            import json
-            with open(f"{config.output_dir}/eval_results.json", "w", encoding="utf-8") as f:
-                json.dump(eval_result, f, indent=2, ensure_ascii=False)
-            
-            print(f"评估结果已保存到 {config.output_dir}/eval_results.json")
+            run_evaluation(trainer, config, save_results=True)
         
         # 只在主进程保存训练结果
         if rank == 0:
@@ -272,7 +260,7 @@ def main():
     主函数，用于测试训练流程
     """
     # 导入配置
-    from config import Config
+    from main import Config
     
     # 加载配置
     config = Config()
